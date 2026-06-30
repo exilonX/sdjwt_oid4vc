@@ -26,3 +26,4 @@ export 'src/sdjwt/disclosure.dart';
 export 'src/sdjwt/issuer_trust.dart';
 export 'src/sdjwt/kb_jwt.dart';
 export 'src/sdjwt/sd_jwt.dart';
+export 'src/sdjwt/status_list.dart';

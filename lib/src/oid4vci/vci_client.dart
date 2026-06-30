@@ -5,6 +5,7 @@ import '../core/errors.dart';
 import '../core/es256_signer.dart';
 import '../core/http.dart';
 import '../core/jws.dart';
+import '../core/net.dart';
 import 'models.dart';
 
 /// OpenID4VCI **holder** client: turns a credential offer into an issued
@@ -263,6 +264,9 @@ class Oid4vciClient {
     final uri = Uri.tryParse(value);
     if (uri == null || !uri.isAbsolute) {
       throw CredentialError('Not an absolute URL: $value');
+    }
+    if (!isSecureUrl(uri)) {
+      throw CredentialError('Refusing to fetch over an insecure URL: $value');
     }
     return uri;
   }

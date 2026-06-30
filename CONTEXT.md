@@ -15,12 +15,23 @@ A Dart library implementing the **holder/wallet** side of SD-JWT VC issuance
 storage (encrypted Hive) and supplies the holder key (hardware via
 `attested_secure_keys`). No Flutter dependency — pure Dart, publishable.
 
-## 2. Status (as of 2026-06-29)
+## 2. Status (as of 2026-06-30)
 
-Initial implementation **complete and green**: all four layers, an example, and
-**137 tests at 100% line coverage** (`dart test`, `dart analyze` clean under a
-strict lint set, `dart pub publish --dry-run` passes with 0 warnings). Version
-`0.1.0-dev.1` (pre-release while the API settles). See §9 for repo/CI/release.
+Implementation **complete and green**: all four layers, an example, and
+**200 tests at 100% line coverage** (`dart test`, `dart analyze` clean under a
+strict lint set, `dart pub publish --dry-run` clean bar the dirty-tree
+advisory). Version `0.1.0-dev.2` (pre-release while the API settles). See §9 for
+repo/CI/release.
+
+`0.1.0-dev.2` added the security hardening + the features a general-purpose
+wallet needs (CHANGELOG has the list): `alg`/`typ` assertion on verify, HTTPS
+enforcement, depth/duplicate-digest guards in `resolveClaims`, `nbf`/validity
+enforcement, **issuer chain validation** (`IssuerTrust.x5cChain`), **RP request
+authentication** (request-object signature exposed for the wallet to verify),
+**revocation** (Token Status List resolver), **multi-credential DCQL**
+(`credential_sets`), and **nested/array disclosure selection** in `present`.
+What stays the app's: the **Trusted List data** itself (which anchors / the EU
+LOTL), and certificate **revocation** (CRL/OCSP) — see §4, §7.
 
 Proven elsewhere in the program: the full issue→present→verify loop works on
 the reference EUDI wallet with the real IM seal. This library is the native
@@ -41,25 +52,35 @@ lib/
     core/                injected contracts + shared primitives
       es256_signer.dart  Es256Signer, KeyAttestation  (THE injection point)
       http.dart          Oid4vcHttp, HttpResp, DefaultOid4vcHttp
-      ec.dart            ES256 verify + JWK/x5c → P-256 key  (pointycastle; NOT exported)
+      ec.dart            ES256 verify + JWK/x5c → P-256 key + X.509 chain validation  (pointycastle/asn1lib; NOT exported)
+      net.dart           isSecureUrl — https-or-loopback gate for fetched URLs
       jwk.dart           RFC 7638 thumbprint
       jws.dart           signing input + compact-JWS decode
       b64u.dart          base64url (unpadded) — the only place the codec lives
       clock.dart         injectable time (no ambient DateTime.now in signing paths)
-      errors.dart        sealed Oid4vcError hierarchy
+      errors.dart        sealed Oid4vcError hierarchy (incl. StatusError)
     sdjwt/               the SD-JWT VC codec (format)
       sd_jwt.dart        SdJwt.parse/issue, SdJwtVc.resolveClaims/verifyIssuer/present
       disclosure.dart    Disclosure (parse/forClaim/digest)
       kb_jwt.dart        sd_hash + KB-JWT build
-      issuer_trust.dart  IssuerTrust (x5cSignatureOnly | issuerMetadata)
+      issuer_trust.dart  IssuerTrust (x5cSignatureOnly | x5cChain | issuerMetadata)
+      issuer_verifier.dart  shared key-resolution + alg/typ guard (NOT exported)
+      status_list.dart   StatusListResolver, StatusListRef, CredentialStatus
     oid4vci/             issuance transport
       vci_client.dart    Oid4vciClient
       models.dart        CredentialOffer, IssuerMetadata, TokenResponse
     oid4vp/              presentation transport
-      vp_client.dart     Oid4vpClient
-      dcql.dart          DcqlQuery / DcqlCredentialQuery / DcqlClaim
-      models.dart        PresentationRequest, CredentialMatch
+      vp_client.dart     Oid4vpClient (match/matchAll/buildVpToken/buildVpTokenObject)
+      dcql.dart          DcqlQuery / DcqlCredentialQuery / DcqlClaim / DcqlCredentialSet
+      models.dart        PresentationRequest (+ RequestObjectSignature), CredentialMatch
 ```
+
+`issuer_verifier.dart` is the single home for "resolve the issuer key per an
+`IssuerTrust` and ES256-verify a JWS", shared by `SdJwtVc.verifyIssuer` (the
+credential seal) and `StatusListResolver` (the status list token is itself an
+issuer-signed JWT). It asserts `alg == ES256` and a caller-supplied `typ` set
+before any key work. `status_list.dart` uses `package:archive` for the zlib
+inflate of the status bitstring (pure Dart, no platform import).
 
 `ec.dart` is the **only** file that touches pointycastle, and it is not
 exported. The codec talks to it through `verifyEs256WithJwk` /
@@ -79,12 +100,41 @@ crypto backends, this is the one file to change.
   TBSCertificate for the `ecPublicKey` SubjectPublicKeyInfo and decodes the
   uncompressed point. No `basic_utils`/extra dep. Tests build a real (minimal)
   DER cert via `test/support/der_cert.dart`.
-- **Trust is signatures, not chains.** `IssuerTrust` verifies the issuer
-  signature (key from `x5c` leaf or `jwt-vc-issuer` metadata). Trusted-List /
-  LOTL validation is governance, out of scope. Relying-Party trust (the
-  verifier's RPAC) is the *app's* job — see the three-key table in
-  `EUDI_ONBOARDING.md §4`; this library only handles key (1) issuer and key (3)
-  holder, never key (2) RP.
+- **Three issuer-trust modes.** `IssuerTrust` offers `signatureOnly` (key from
+  the `x5c` leaf — integrity only), `x5cChain(trustAnchors)` (validate the chain
+  to a caller-supplied anchor, then verify with the leaf), and `issuerMetadata`
+  (key from `jwt-vc-issuer` metadata). `x5cChain` checks each link's
+  ECDSA-SHA256 signature, every cert's validity window, and anchoring (top is —
+  or is signed by — a currently-valid anchor); it does **not** do revocation
+  (CRL/OCSP) or name/policy constraints, and the **anchors themselves** (the EU
+  LOTL) are app-provided. The X.509 parsing/verify lives in `ec.dart`
+  (`parseX509Certificate`, `certificateSignedBy`, `verifyEs256WithX5cChain`) so
+  no crypto/ASN.1 type leaks out; `issuer_verifier` just orchestrates.
+- **RP auth is mechanism-here, policy-there.** The library no longer discards
+  the OID4VP request object's signature: `PresentationRequest.signature`
+  (`RequestObjectSignature`) exposes the `x5c`/header/signing-input and offers
+  `verifyWithX5cLeaf()` / `verifyWithJwk()` to confirm *integrity*. The wallet
+  still owns the *trust* decision (chain to a reader trust anchor, SAN matches
+  `clientIdValue`). So the three-key table in `EUDI_ONBOARDING.md §4` now reads:
+  key (1) issuer and key (3) holder fully here; key (2) RP — verify mechanism
+  here, trust policy in the app.
+- **`alg`/`typ` asserted before key work.** Defence-in-depth (the verify path is
+  ES256-only regardless, so alg-confusion was never exploitable) plus
+  cross-type-confusion protection (a status list token can't pass where a
+  credential is expected). Lives in `issuer_verifier`.
+- **HTTPS or loopback only.** Every URL dereferenced from untrusted input goes
+  through `isSecureUrl` (`core/net.dart`): `https`, or `http` to
+  localhost/127.0.0.1/::1 for dev. Keeps issuer keys / status lists off
+  cleartext.
+- **Revocation via `package:archive`.** The Token Status List bitstring is
+  zlib-DEFLATE; `archive` gives a pure-Dart inflate with no platform import
+  (keeps the library web-safe), at the cost of one extra dependency. `dart:io`'s
+  `ZLibCodec` was the zero-dep alternative but would have bound the package to
+  non-web platforms.
+- **`present` selects by name *and* path.** Back-compat `disclose` (top-level
+  names) plus `disclosePaths` (full DCQL paths). Path selection walks the
+  credential to index each disclosure's path + ancestor chain, so revealing a
+  nested claim also reveals the parent disclosures it needs to resolve.
 - **`verifyIssuer` returns `bool` but throws `SdJwtError` when the key cannot be
   resolved** (no `x5c`, unreachable metadata, malformed key). "Key found,
   signature mismatched" → `false`; "couldn't even get a key" → throw. Callers
@@ -131,9 +181,21 @@ verify against `reges-eudi` / `reges-eudi-verifier` when integrating:
   `iss=https://h/p` the metadata is at `https://h/.well-known/<doc>/p`. Tests
   pin this; a live issuer that uses the naive `https://h/p/.well-known/<doc>`
   form would need a tweak in `_wellKnown` / `_wellKnownJwtVcIssuer`.
-- **Request Object signature is NOT verified.** `parseRequest`/`fetchRequest`
-  decode but do not check the JAR signature; the app must validate the RP
-  certificate (`trustedReaderCertificates`) before trusting a request.
+- **Request Object signature is exposed, not auto-verified.**
+  `parseRequest`/`fetchRequest` no longer discard the JAR signature — it is on
+  `PresentationRequest.signature` with `verifyWithX5cLeaf()` / `verifyWithJwk()`.
+  The app still validates the RP certificate (`trustedReaderCertificates`, SAN
+  vs. `clientIdValue`) before trusting a request; the library only does the
+  ES256 integrity check on demand. (These helpers are ES256-only — check
+  `signature.alg` if a verifier might use another algorithm.)
+- **Status list (revocation).** `StatusListResolver` follows the IETF Token
+  Status List draft: `GET` the `statuslist+jwt`, optional issuer-signature
+  verify, zlib-inflate `status_list.lst`, read `bits`-wide value at the index
+  (LSB-first packing). Confirm against the live issuer's `bits`, the
+  `Accept`/media type, and whether the token's `sub` must equal the list URI
+  (not enforced yet). `vp_token` for multi-credential DCQL is built as a JSON
+  object keyed by query id (`buildVpTokenObject`); a deployment that wraps each
+  value in an array would need a tweak there.
 
 ## 7. Next steps
 
@@ -144,10 +206,15 @@ verify against `reges-eudi` / `reges-eudi-verifier` when integrating:
    present to `reges-eudi-verifier`. Capture real test vectors (a real offer, a
    real DCQL request, a real issuer `x5c`) and add them as fixtures.
 3. PID (`urn:eudi:pid:1`) once `pscid-eudi` exists — same transport, possibly
-   new claim shapes; resolve-claims already handles nested objects + arrays.
-4. Later: `mdoc`/ISO 18013 codec under `src/mdoc/` on the same transport;
-   status-list (revocation) checking — `statusRef` is exposed but not yet
-   resolved.
+   new claim shapes; resolve-claims already handles nested objects + arrays, and
+   `present(disclosePaths:)` now selects nested/array claims by DCQL path.
+4. **Trust anchors / LOTL wiring** — the chain *mechanism* is done
+   (`IssuerTrust.x5cChain`); what's left is the *data*: the app fetches/parses
+   the EU LOTL (or a configured anchor set) and feeds the DER anchors in. Same
+   pattern for RP trust anchors on the (now exposed) request signature. Optional
+   later: certificate revocation (CRL/OCSP), which `x5cChain` does not do.
+5. Later: `mdoc`/ISO 18013 codec under `src/mdoc/` on the same transport.
+   (Revocation of *credentials* is implemented — `StatusListResolver`.)
    - Transport readiness for mdoc, precisely: `Oid4vciClient` is **already**
      format-agnostic (it moves the credential as an opaque string and never
      parses it). `Oid4vpClient` is **not yet** — `match`/`buildVpToken` are

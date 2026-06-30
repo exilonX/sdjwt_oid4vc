@@ -55,3 +55,10 @@ class HttpError extends Oid4vcError {
   /// The HTTP status code, or `null` if the request never got a response.
   final int? statusCode;
 }
+
+/// A credential's revocation status could not be resolved — the status list was
+/// unreachable or malformed, its signature did not verify, or the index was out
+/// of range.
+class StatusError extends Oid4vcError {
+  const StatusError(super.message, {super.cause});
+}

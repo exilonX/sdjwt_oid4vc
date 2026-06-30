@@ -114,13 +114,21 @@ dart test
 
 ## Scope
 
-In: SD-JWT VC (`dc+sd-jwt`) parse/resolve/verify/present, OpenID4VCI
-pre-authorized-code issuance, OpenID4VP presentation with DCQL, KB-JWT,
-issuer trust via `x5c` or `jwt-vc-issuer` metadata.
+In: SD-JWT VC (`dc+sd-jwt`) parse/resolve/verify/present (including nested and
+array claims by DCQL path), OpenID4VCI pre-authorized-code issuance, OpenID4VP
+presentation with DCQL (single and multi-credential `credential_sets`), KB-JWT,
+issuer trust via `x5c` signature, **`x5c` chain validation** to caller-supplied
+anchors, or `jwt-vc-issuer` metadata, **revocation** via the IETF Token Status
+List, and the **request-object signature** exposed so the wallet can
+authenticate the verifier.
 
 Out (for now): mdoc/ISO 18013, W3C JSON-LD VC, OIDC login, issuer/verifier
-server roles, credential storage, and Relying-Party (verifier-certificate)
-trust — the wallet app owns that.
+server roles, and credential storage. The library does the *mechanism* but
+leaves the *governance data* to the app: it validates an issuer `x5c` chain
+against trust anchors **you provide** (fetching/parsing the EU Trusted List is
+yours), it verifies a Relying-Party's request signature on demand but **you**
+decide whether to trust the certificate, and certificate revocation (CRL/OCSP)
+is out of scope.
 
 ## Context
 

@@ -5,20 +5,79 @@ import 'package:sdjwt_oid4vc/sdjwt_oid4vc.dart';
 import 'package:sdjwt_oid4vc/testing.dart';
 import 'package:test/test.dart';
 
+import '../support/der_cert.dart';
 import '../support/fake_http.dart';
 import '../support/util.dart';
 
 const _vct = 'https://issuer.example/extras/v1';
+const _mdlVct = 'https://issuer.example/mdl/v1';
 const _clientId = 'https://verifier.example';
 
-/// A request object JWT (JAR). `parseRequest` never verifies it, so a fake
-/// signature is fine.
+/// A two-credential DCQL query (a PID-like and an mDL-like credential),
+/// optionally wrapped in a `credential_sets` that requires both.
+Map<String, dynamic> multiDcql({bool sets = true}) => {
+      'credentials': [
+        {
+          'id': 'pid',
+          'format': 'dc+sd-jwt',
+          'meta': {
+            'vct_values': [_vct],
+          },
+          'claims': [
+            {
+              'path': ['given_name'],
+            },
+          ],
+        },
+        {
+          'id': 'mdl',
+          'format': 'dc+sd-jwt',
+          'meta': {
+            'vct_values': [_mdlVct],
+          },
+          'claims': [
+            {
+              'path': ['family_name'],
+            },
+          ],
+        },
+      ],
+      if (sets)
+        'credential_sets': [
+          {
+            'options': [
+              ['pid', 'mdl'],
+            ],
+          },
+        ],
+    };
+
+/// A request object JWT (JAR) with a throwaway signature — fine wherever the
+/// test does not exercise signature verification.
 String requestJwt(Map<String, dynamic> payload) {
   final signingInput = Jws.signingInput(
     const {'alg': 'ES256', 'typ': 'oauth-authz-req+jwt'},
     payload,
   );
   return '$signingInput.${b64uEncode([1, 2, 3])}';
+}
+
+/// A request object JWT genuinely signed by [verifier], optionally carrying an
+/// `x5c` chain — for the RP-authentication tests.
+Future<String> signedRequestJwt(
+  Map<String, dynamic> payload,
+  SoftwareEs256Signer verifier, {
+  List<String>? x5c,
+  String? kid,
+}) async {
+  final header = {
+    'alg': 'ES256',
+    'typ': 'oauth-authz-req+jwt',
+    if (kid != null) 'kid': kid,
+    if (x5c != null) 'x5c': x5c,
+  };
+  final signingInput = Jws.signingInput(header, payload);
+  return '$signingInput.${await verifier.signEs256(signingInput)}';
 }
 
 Map<String, dynamic> dcql({
@@ -323,6 +382,214 @@ void main() {
         () => Oid4vpClient(http).fetchRequest('openid4vp://?request_uri=rel'),
         throwsA(isA<PresentationError>()),
       );
+    });
+
+    test('refuses to fetch a request_uri over insecure http', () async {
+      final http = FakeOid4vcHttp((_) => HttpResp(404, ''));
+      expect(
+        () => Oid4vpClient(http)
+            .fetchRequest('openid4vp://?request_uri=http://verifier.example/r'),
+        throwsA(isA<PresentationError>()),
+      );
+    });
+  });
+
+  group('multi-credential DCQL', () {
+    final client = Oid4vpClient(
+      FakeOid4vcHttp((_) => HttpResp(404, '')),
+      now: fixedClock(1700),
+    );
+
+    PresentationRequest reqWith(Map<String, dynamic> query) =>
+        client.parseRequest(requestJwt(requestPayload(query: query)));
+
+    test('matchAll returns one match per satisfiable query', () async {
+      final req = reqWith(multiDcql());
+      final matches = client.matchAll(
+        req,
+        [await heldCredential(), await heldCredential(vct: _mdlVct)],
+      );
+      expect(matches.map((m) => m.queryId), ['pid', 'mdl']);
+      expect(client.satisfiesRequest(req, matches), isTrue);
+    });
+
+    test('a required set is unsatisfied when one credential is missing',
+        () async {
+      final req = reqWith(multiDcql());
+      final onlyPid = client.matchAll(req, [await heldCredential()]);
+      expect(onlyPid.map((m) => m.queryId), ['pid']);
+      expect(client.satisfiesRequest(req, onlyPid), isFalse);
+    });
+
+    test('with no credential_sets, every listed credential is required',
+        () async {
+      final req = reqWith(multiDcql(sets: false));
+      final both = client.matchAll(
+        req,
+        [await heldCredential(), await heldCredential(vct: _mdlVct)],
+      );
+      expect(client.satisfiesRequest(req, both), isTrue);
+      expect(
+        client.satisfiesRequest(
+          req,
+          client.matchAll(req, [await heldCredential()]),
+        ),
+        isFalse,
+      );
+    });
+
+    test('optional sets do not block satisfaction', () async {
+      final req = reqWith({
+        'credentials': [
+          {
+            'id': 'pid',
+            'meta': {
+              'vct_values': [_vct],
+            },
+            'claims': [
+              {
+                'path': ['given_name'],
+              },
+            ],
+          },
+          {
+            'id': 'extra',
+            'meta': {
+              'vct_values': ['https://none/v1'],
+            },
+            'claims': const <Map<String, dynamic>>[],
+          },
+        ],
+        'credential_sets': [
+          {
+            'options': [
+              ['pid'],
+            ],
+          },
+          {
+            'options': [
+              ['extra'],
+            ],
+            'required': false,
+          },
+        ],
+      });
+      final matches = client.matchAll(req, [await heldCredential()]);
+      expect(matches.map((m) => m.queryId), ['pid']);
+      expect(client.satisfiesRequest(req, matches), isTrue);
+    });
+
+    test('buildVpTokenObject keys each presentation by its query id', () async {
+      final req = reqWith(multiDcql());
+      final matches = client.matchAll(
+        req,
+        [await heldCredential(), await heldCredential(vct: _mdlVct)],
+      );
+      final vpToken = await client.buildVpTokenObject(
+        matches: matches,
+        req: req,
+        signer: signer,
+      );
+
+      final object = jsonDecode(vpToken) as Map<String, dynamic>;
+      expect(object.keys, containsAll(<String>['pid', 'mdl']));
+
+      final pid = SdJwt.parse(object['pid'] as String);
+      expect(pid.disclosures.single.name, 'given_name');
+      expect(Jws.decompose(pid.kbJwt!).payload['nonce'], 'nonce-1');
+
+      final mdl = SdJwt.parse(object['mdl'] as String);
+      expect(mdl.disclosures.single.name, 'family_name');
+    });
+  });
+
+  group('request object signature (RP authentication)', () {
+    final client = Oid4vpClient(FakeOid4vcHttp((_) => HttpResp(404, '')));
+    final verifier = SoftwareEs256Signer.generate(random: Random(77));
+    final verifierJwk = verifier.publicJwkSync();
+    final leaf = buildX5cLeafFromJwk(verifierJwk);
+
+    test('captures and verifies the JAR signing material', () async {
+      final jar =
+          await signedRequestJwt(requestPayload(), verifier, x5c: [leaf]);
+      final sig = client.parseRequest(jar).signature!;
+      expect(sig.alg, 'ES256');
+      expect(sig.kid, isNull);
+      expect(sig.x5c, [leaf]);
+      expect(sig.verifyWithX5cLeaf(), isTrue);
+      expect(sig.verifyWithJwk(verifierJwk), isTrue);
+    });
+
+    test('rejects a signature made by a different key', () async {
+      final other = SoftwareEs256Signer.generate(random: Random(78));
+      final jar = await signedRequestJwt(
+        requestPayload(),
+        verifier,
+        x5c: [buildX5cLeafFromJwk(other.publicJwkSync())],
+      );
+      final sig = client.parseRequest(jar).signature!;
+      expect(sig.verifyWithX5cLeaf(), isFalse);
+      expect(sig.verifyWithJwk(other.publicJwkSync()), isFalse);
+    });
+
+    test('exposes kid and tolerates a missing x5c', () async {
+      final jar =
+          await signedRequestJwt(requestPayload(), verifier, kid: 'rp-1');
+      final sig = client.parseRequest(jar).signature!;
+      expect(sig.kid, 'rp-1');
+      expect(sig.x5c, isEmpty);
+      expect(sig.verifyWithJwk(verifierJwk), isTrue);
+    });
+
+    test('throws PresentationError on an unusable x5c leaf or bad JWK', () {
+      final si = Jws.signingInput(
+        const {
+          'alg': 'ES256',
+          'typ': 'oauth-authz-req+jwt',
+          'x5c': ['@@@ not a certificate @@@'],
+        },
+        requestPayload(),
+      );
+      final sig =
+          client.parseRequest('$si.${b64uEncode([1, 2, 3])}').signature!;
+      expect(sig.verifyWithX5cLeaf, throwsA(isA<PresentationError>()));
+      expect(
+        () => sig.verifyWithJwk(const {'kty': 'RSA', 'n': 'AQAB', 'e': 'AQAB'}),
+        throwsA(isA<PresentationError>()),
+      );
+    });
+
+    test('is null for an unsigned inline request', () async {
+      final link = Uri(
+        scheme: 'openid4vp',
+        host: '',
+        queryParameters: {
+          'client_id': _clientId,
+          'nonce': 'n',
+          'response_uri': '$_clientId/r',
+          'dcql_query': jsonEncode(dcql()),
+        },
+      ).toString();
+      final req = await client.fetchRequest(link);
+      expect(req.signature, isNull);
+    });
+
+    test('splits the client_id scheme from its value', () {
+      PresentationRequest parse(String clientId) => client.parseRequest(
+            requestJwt({...requestPayload(), 'client_id': clientId}),
+          );
+
+      final dns = parse('x509_san_dns:verifier.example');
+      expect(dns.clientIdScheme, 'x509_san_dns');
+      expect(dns.clientIdValue, 'verifier.example');
+
+      final bare = parse('https://verifier.example'); // unknown 'https' prefix
+      expect(bare.clientIdScheme, isNull);
+      expect(bare.clientIdValue, 'https://verifier.example');
+
+      final plain = parse('preregistered-id'); // no colon at all
+      expect(plain.clientIdScheme, isNull);
+      expect(plain.clientIdValue, 'preregistered-id');
     });
   });
 }

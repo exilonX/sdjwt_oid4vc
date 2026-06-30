@@ -98,6 +98,14 @@ void main() {
         throwsA(isA<OfferParseError>()),
       );
     });
+
+    test('refuses to fetch an offer_uri over insecure http', () async {
+      expect(
+        () => Oid4vciClient(happyIssuer())
+            .parseOffer('x://?credential_offer_uri=http://issuer.example/o'),
+        throwsA(isA<CredentialError>()),
+      );
+    });
   });
 
   group('fetchIssuerMetadata', () {
