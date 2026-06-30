@@ -241,6 +241,13 @@ verify against `reges-eudi` / `reges-eudi-verifier` when integrating:
   cover internals (e.g. `ec.dart`).
 - Crypto is the risky surface. If you change `ec.dart`, the discriminating tests
   are in `test/core/ec_test.dart` and the end-to-end `test/integration/`.
+- **`pointycastle` is `>=3.9.1 <5.0.0`** so a wallet pinned to pointycastle
+  3.9.x (the ROeID app, for PDF signing / NFC) resolves it with no override. We
+  use only stable 3.9+ primitives. One sharp edge: `generateKeyPair()` returns
+  the generic `Private/PublicKey` on 3.9.x and the narrowed types on 4.x, so
+  `software_signer.dart` types the pair as `AsymmetricKeyPair<PublicKey,
+  PrivateKey>` and downcasts — necessary (hence warning-free) on both. The
+  `pointycastle-floor` CI job pins 3.9.1 and runs the suite to keep this true.
 - **Run the example** from the package root (it is a pure-Dart library, not a
   Flutter app — there is no `lib/main.dart`, so `flutter run` does not apply):
   `dart pub get` then `dart run example/sdjwt_oid4vc_example.dart`.

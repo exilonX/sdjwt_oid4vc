@@ -21,7 +21,10 @@ dependencies:
   asn1lib: ^1.5.0 # parse x5c (DER X.509) to extract the issuer public key
   crypto: ^3.0.0 # SHA-256 for SD-JWT digests, sd_hash, JWK thumbprint
   http: ^1.0.0 # default Oid4vcHttp implementation
-  pointycastle: ^4.0.0 # ES256 (ECDSA P-256) verify + software signer for tests
+  # ES256 (ECDSA P-256) verify + software signer. Kept wide on purpose: the
+  # library uses only stable 3.9+ primitives, so a wallet pinned to pointycastle
+  # 3.9.x (e.g. for PDF signing / NFC) resolves it with no dependency override.
+  pointycastle: ">=3.9.1 <5.0.0"
 
 dev_dependencies:
   coverage: ^1.7.0
