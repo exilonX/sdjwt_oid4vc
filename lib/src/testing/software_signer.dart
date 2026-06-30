@@ -41,8 +41,16 @@ class SoftwareEs256Signer implements Es256Signer {
           FortunaRandom()..seed(KeyParameter(seed)),
         ),
       );
-    final pair = generator.generateKeyPair();
-    return SoftwareEs256Signer._(pair.privateKey, pair.publicKey, attestor);
+    // Type the pair as the generic Private/PublicKey — pointycastle 3.9.x infers
+    // those, 4.x narrows them — so the downcast below is genuinely needed (and
+    // thus warning-free) on both versions.
+    final AsymmetricKeyPair<PublicKey, PrivateKey> pair =
+        generator.generateKeyPair();
+    return SoftwareEs256Signer._(
+      pair.privateKey as ECPrivateKey,
+      pair.publicKey as ECPublicKey,
+      attestor,
+    );
   }
 
   final ECPrivateKey _private;

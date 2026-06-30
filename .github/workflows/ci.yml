@@ -53,6 +53,25 @@ jobs:
       - name: Smoke-test the example
         run: dart run example/sdjwt_oid4vc_example.dart
 
+  pointycastle-floor:
+    name: Compat · pointycastle 3.9.x (wallet pin)
+    runs-on: ubuntu-latest
+    # The constraint is `>=3.9.1 <5.0.0` so wallets pinned to pointycastle 3.9.x
+    # (PDF/NFC) resolve with no override. Pin it to the floor here and run the
+    # full suite, so a 4.x-only API can never slip in and break those consumers.
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dart-lang/setup-dart@v1
+        with:
+          sdk: stable
+      - name: Pin pointycastle to the floor
+        run: printf '\ndependency_overrides:\n  pointycastle: 3.9.1\n' >> pubspec.yaml
+      - run: dart pub get
+      - name: Show resolved pointycastle
+        run: dart pub deps | grep pointycastle
+      - run: dart analyze
+      - run: dart test
+
   release-checks:
     name: Release checks (publish dry-run)
     runs-on: ubuntu-latest

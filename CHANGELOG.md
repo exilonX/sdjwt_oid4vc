@@ -34,6 +34,10 @@ production. All additive — existing call sites keep working.
 - **Nested presentation** — `present` gains `disclosePaths` (full DCQL claim
   paths, including nested objects, array indices, and the `null` "all elements"
   wildcard), pulling in each path's ancestor disclosures.
+- **Dependency** — `pointycastle` widened to `>=3.9.1 <5.0.0` (was `^4.0.0`).
+  The library uses only stable 3.9+ primitives, so a wallet pinned to
+  pointycastle 3.9.x (e.g. for PDF signing / NFC) resolves it with no dependency
+  override. Verified on both 3.9.1 and 4.0.0; a CI job pins the floor.
 
 ## 0.1.0-dev.1 (unreleased)
 
