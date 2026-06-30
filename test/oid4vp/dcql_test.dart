@@ -59,4 +59,58 @@ void main() {
       );
     });
   });
+
+  group('credential_sets', () {
+    test('reads options and the required flag', () {
+      final query = DcqlQuery.fromJson({
+        'credentials': [
+          {'id': 'pid'},
+          {'id': 'mdl'},
+          {'id': 'age'},
+        ],
+        'credential_sets': [
+          {
+            'options': [
+              ['pid'],
+              ['mdl', 'age'],
+            ],
+          },
+          {
+            'options': [
+              ['age'],
+            ],
+            'required': false,
+          },
+        ],
+      });
+      expect(query.credentialSets, hasLength(2));
+      expect(query.credentialSets[0].options, [
+        ['pid'],
+        ['mdl', 'age'],
+      ]);
+      expect(query.credentialSets[0].required, isTrue); // default
+      expect(query.credentialSets[1].required, isFalse);
+    });
+
+    test('defaults to empty, and tolerates a set with no options', () {
+      expect(
+        DcqlQuery.fromJson({
+          'credentials': [
+            {'id': 'c1'},
+          ],
+        }).credentialSets,
+        isEmpty,
+      );
+
+      final malformed = DcqlQuery.fromJson({
+        'credentials': [
+          {'id': 'c1'},
+        ],
+        'credential_sets': [
+          {'required': true}, // no options array
+        ],
+      });
+      expect(malformed.credentialSets.single.options, isEmpty);
+    });
+  });
 }

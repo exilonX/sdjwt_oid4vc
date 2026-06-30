@@ -112,4 +112,85 @@ void main() async {
       expect(() => ecPublicKeyFromX5cLeaf([der]), throwsFormatException);
     });
   });
+
+  group('parseX509Certificate', () {
+    test('parses a signed certificate and verifies its self-signature', () {
+      final cert = parseX509Certificate(
+        buildSignedCert(subjectJwk: jwk, issuer: signer),
+      );
+      final at2030 = DateTime.utc(2030).millisecondsSinceEpoch ~/ 1000;
+      final at2010 = DateTime.utc(2010).millisecondsSinceEpoch ~/ 1000;
+      expect(cert.isValidAt(at2030), isTrue);
+      expect(cert.isValidAt(at2010), isFalse);
+      // Self-signed: the parsed key verifies the certificate's own signature.
+      expect(certificateSignedBy(cert, cert.publicKey), isTrue);
+    });
+
+    test('rejects DER that is not a 3-field certificate', () {
+      final notACert = base64.encode(ASN1Integer.fromInt(5).encodedBytes);
+      expect(() => parseX509Certificate(notACert), throwsFormatException);
+
+      final twoFields = ASN1Sequence()
+        ..add(ASN1Sequence())
+        ..add(ASN1Sequence());
+      expect(
+        () => parseX509Certificate(base64.encode(twoFields.encodedBytes)),
+        throwsFormatException,
+      );
+    });
+
+    test('rejects a non-sequence tbs or non-bitstring signature', () {
+      final badTbs = ASN1Sequence()
+        ..add(ASN1Integer.fromInt(1)) // tbs must be a SEQUENCE
+        ..add(ASN1Sequence())
+        ..add(ASN1BitString(Uint8List.fromList([0])));
+      expect(
+        () => parseX509Certificate(base64.encode(badTbs.encodedBytes)),
+        throwsFormatException,
+      );
+
+      final badSig = ASN1Sequence()
+        ..add(ASN1Sequence())
+        ..add(ASN1Sequence())
+        ..add(ASN1Integer.fromInt(1)); // signatureValue must be a BIT STRING
+      expect(
+        () => parseX509Certificate(base64.encode(badSig.encodedBytes)),
+        throwsFormatException,
+      );
+    });
+
+    test('rejects a certificate with no validity period', () {
+      expect(
+        () => parseX509Certificate(buildX5cLeafFromJwk(jwk)),
+        throwsFormatException,
+      );
+    });
+
+    test('rejects a non-ECDSA signature value', () {
+      ASN1Sequence validity() => ASN1Sequence()
+        ..add(ASN1UtcTime(DateTime.utc(2020)))
+        ..add(ASN1UtcTime(DateTime.utc(2040)));
+      String certWith(ASN1Object signatureValue) {
+        final cert = ASN1Sequence()
+          ..add(ASN1Sequence()..add(validity()))
+          ..add(ASN1Sequence())
+          ..add(ASN1BitString(Uint8List.fromList(signatureValue.encodedBytes)));
+        return base64.encode(cert.encodedBytes);
+      }
+
+      // Not a SEQUENCE at all.
+      expect(
+        () => parseX509Certificate(certWith(ASN1Integer.fromInt(7))),
+        throwsFormatException,
+      );
+      // A SEQUENCE, but not of two INTEGERs.
+      final notIntegers = ASN1Sequence()
+        ..add(ASN1Sequence())
+        ..add(ASN1Sequence());
+      expect(
+        () => parseX509Certificate(certWith(notIntegers)),
+        throwsFormatException,
+      );
+    });
+  });
 }

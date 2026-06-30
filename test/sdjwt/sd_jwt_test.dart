@@ -16,9 +16,9 @@ import '../support/util.dart';
 String customSdJwt(
   Map<String, dynamic> payload, {
   List<String> disclosures = const [],
+  Map<String, dynamic> header = const {'alg': 'ES256', 'typ': 'dc+sd-jwt'},
 }) {
-  final signingInput =
-      Jws.signingInput(const {'alg': 'ES256', 'typ': 'dc+sd-jwt'}, payload);
+  final signingInput = Jws.signingInput(header, payload);
   final buffer = StringBuffer('$signingInput.${b64uEncode([9, 9, 9])}~');
   for (final disclosure in disclosures) {
     buffer.write('$disclosure~');
@@ -421,6 +421,149 @@ void main() {
     });
   });
 
+  group('present by path (nested / arrays)', () {
+    Future<String> presentPaths(String compact, Set<List<Object?>> paths) =>
+        SdJwt.parse(compact).present(
+          disclosePaths: paths,
+          audience: 'aud',
+          nonce: 'n',
+          signer: signer,
+          now: fixedClock(1),
+        );
+
+    test('reveals a nested claim by path, leaving siblings hidden', () async {
+      final street =
+          Disclosure.forClaim(salt: 's1', name: 'street', value: 'Main');
+      final city = Disclosure.forClaim(salt: 's2', name: 'city', value: 'Cluj');
+      final compact = customSdJwt(
+        {
+          'iss': 'x',
+          'vct': 'v',
+          '_sd_alg': 'sha-256',
+          'address': {
+            '_sd': [street.digest(sha256), city.digest(sha256)],
+          },
+        },
+        disclosures: [street.encoded, city.encoded],
+      );
+
+      final presented = SdJwt.parse(
+        await presentPaths(compact, {
+          ['address', 'street'],
+        }),
+      );
+      expect(presented.disclosures.map((d) => d.name), ['street']);
+      final address = presented.resolveClaims()['address'] as Map;
+      expect(address['street'], 'Main');
+      expect(address.containsKey('city'), isFalse);
+    });
+
+    test('pulls in the parent disclosure for a doubly-nested claim', () async {
+      final street =
+          Disclosure.forClaim(salt: 's1', name: 'street', value: 'Main');
+      final address = Disclosure.forClaim(
+        salt: 's2',
+        name: 'address',
+        value: {
+          '_sd': [street.digest(sha256)],
+        },
+      );
+      final compact = customSdJwt(
+        {
+          'iss': 'x',
+          '_sd_alg': 'sha-256',
+          '_sd': [address.digest(sha256)],
+        },
+        disclosures: [address.encoded, street.encoded],
+      );
+
+      final presented = SdJwt.parse(
+        await presentPaths(compact, {
+          ['address', 'street'],
+        }),
+      );
+      expect(
+        presented.disclosures.map((d) => d.name).toSet(),
+        {'address', 'street'},
+      );
+      expect((presented.resolveClaims()['address'] as Map)['street'], 'Main');
+    });
+
+    test('discloses a single array element, or all via a null wildcard',
+        () async {
+      final ro = b64uEncodeString(jsonEncode(['s1', 'RO']));
+      final de = b64uEncodeString(jsonEncode(['s2', 'DE']));
+      final compact = customSdJwt(
+        {
+          'iss': 'x',
+          '_sd_alg': 'sha-256',
+          'nationalities': [
+            {'...': Disclosure.parse(ro).digest(sha256)},
+            {'...': Disclosure.parse(de).digest(sha256)},
+            'XX', // a clear (non-disclosure) array element
+          ],
+        },
+        disclosures: [ro, de],
+      );
+
+      final one = SdJwt.parse(
+        await presentPaths(compact, {
+          ['nationalities', 0],
+        }),
+      );
+      expect(one.resolveClaims()['nationalities'], ['RO', 'XX']);
+
+      final all = SdJwt.parse(
+        await presentPaths(compact, {
+          ['nationalities', null],
+        }),
+      );
+      expect(all.resolveClaims()['nationalities'], ['RO', 'DE', 'XX']);
+    });
+
+    test('a null wildcard does not select a non-array position', () async {
+      final compact = await SdJwt.issue(
+        claims: const {'iss': 'x', 'vct': 'v', 'given_name': 'Ada'},
+        header: const {},
+        selectivelyDisclosable: const {'given_name'},
+        signer: signer,
+        saltGenerator: seqSalts(['s1']),
+      );
+      final presented = SdJwt.parse(
+        await presentPaths(compact, {
+          [null],
+        }),
+      );
+      expect(presented.disclosures, isEmpty);
+    });
+
+    test('rejects presenting a pathologically deep credential', () async {
+      Object deep(int n) {
+        Object node = 'leaf';
+        for (var i = 0; i < n; i++) {
+          node = {'a': node};
+        }
+        return node;
+      }
+
+      final d = Disclosure.forClaim(salt: 's', name: 'deep', value: deep(40));
+      final compact = customSdJwt(
+        {
+          'iss': 'x',
+          '_sd_alg': 'sha-256',
+          '_sd': [d.digest(sha256)],
+        },
+        disclosures: [d.encoded],
+      );
+      expect(
+        () => presentPaths(compact, {
+          ['deep'],
+        }),
+        throwsA(isA<SdJwtError>()),
+      );
+    });
+  });
+
   group('verifyIssuer error edges', () {
     test('wraps an invalid x5c leaf as SdJwtError', () async {
       final compact = await _issued(
@@ -478,6 +621,187 @@ void main() {
       );
       final http = FakeOid4vcHttp.byPath({
         '/.well-known/jwt-vc-issuer': jsonResponse({'jwks_uri': 'relative'}),
+      });
+      expect(
+        () => SdJwt.parse(compact)
+            .verifyIssuer(IssuerTrust.issuerMetadata(), http: http),
+        throwsA(isA<SdJwtError>()),
+      );
+    });
+  });
+
+  group('resolveClaims hardening', () {
+    test('rejects two disclosures sharing one digest', () {
+      final d = Disclosure.forClaim(salt: 's', name: 'n', value: 'v');
+      final compact = customSdJwt(
+        {
+          'iss': 'x',
+          '_sd_alg': 'sha-256',
+          '_sd': [d.digest(sha256)],
+        },
+        disclosures: [d.encoded, d.encoded], // same disclosure twice
+      );
+      expect(
+        () => SdJwt.parse(compact).resolveClaims(),
+        throwsA(isA<SdJwtError>()),
+      );
+    });
+
+    test('rejects a digest referenced more than once', () {
+      final d = Disclosure.forClaim(salt: 's', name: 'n', value: 'v');
+      final compact = customSdJwt(
+        {
+          'iss': 'x',
+          '_sd_alg': 'sha-256',
+          '_sd': [d.digest(sha256), d.digest(sha256)], // same digest twice
+        },
+        disclosures: [d.encoded],
+      );
+      expect(
+        () => SdJwt.parse(compact).resolveClaims(),
+        throwsA(isA<SdJwtError>()),
+      );
+    });
+
+    test('rejects a disclosed claim that collides with a clear one', () {
+      final d = Disclosure.forClaim(salt: 's', name: 'n', value: 'v');
+      final compact = customSdJwt(
+        {
+          'iss': 'x',
+          'n': 'clear', // a clear claim of the same name
+          '_sd_alg': 'sha-256',
+          '_sd': [d.digest(sha256)],
+        },
+        disclosures: [d.encoded],
+      );
+      expect(
+        () => SdJwt.parse(compact).resolveClaims(),
+        throwsA(isA<SdJwtError>()),
+      );
+    });
+
+    test('rejects nesting beyond the depth limit', () {
+      Object deep(int n) {
+        Object node = 'leaf';
+        for (var i = 0; i < n; i++) {
+          node = {'a': node};
+        }
+        return node;
+      }
+
+      final compact = customSdJwt({'iss': 'x', 'deep': deep(40)});
+      expect(
+        () => SdJwt.parse(compact).resolveClaims(),
+        throwsA(isA<SdJwtError>()),
+      );
+    });
+  });
+
+  group('validity window', () {
+    test('exposes nbf / isValid and honours the window', () {
+      final vc = SdJwt.parse(
+        customSdJwt(const {'iss': 'x', 'nbf': 1000, 'exp': 2000}),
+      );
+      expect(vc.notBefore, 1000);
+      expect(vc.isNotYetValidAt(999), isTrue);
+      expect(vc.isNotYetValidAt(1000), isFalse);
+      expect(vc.isValidAt(999), isFalse); // before nbf
+      expect(vc.isValidAt(1500), isTrue);
+      expect(vc.isValidAt(2000), isFalse); // at exp
+      expect(vc.isNotYetValid, isFalse); // nbf is in 1970
+
+      final none = SdJwt.parse(customSdJwt(const {'iss': 'x'}));
+      expect(none.notBefore, isNull);
+      expect(none.isNotYetValidAt(0), isFalse);
+      expect(none.isValid, isTrue);
+    });
+
+    test('verifyIssuer enforceValidity rejects an out-of-window credential',
+        () async {
+      final compact = await SdJwt.issue(
+        claims: {'iss': 'https://issuer.example', 'vct': 'v', 'exp': 2000},
+        header: {
+          'x5c': [buildX5cLeafFromJwk(jwk)],
+        },
+        selectivelyDisclosable: const {},
+        signer: signer,
+      );
+      final vc = SdJwt.parse(compact);
+
+      // Signature is valid regardless of the clock.
+      expect(await vc.verifyIssuer(IssuerTrust.signatureOnly()), isTrue);
+      // Expired under enforcement → not currently trustworthy.
+      expect(
+        await vc.verifyIssuer(
+          IssuerTrust.signatureOnly(),
+          enforceValidity: true,
+          now: fixedClock(3000),
+        ),
+        isFalse,
+      );
+      // Inside the window under enforcement → trustworthy.
+      expect(
+        await vc.verifyIssuer(
+          IssuerTrust.signatureOnly(),
+          enforceValidity: true,
+          now: fixedClock(1500),
+        ),
+        isTrue,
+      );
+    });
+  });
+
+  group('header guard', () {
+    test('rejects a non-ES256 alg before any key work', () {
+      final compact = customSdJwt(
+        const {'iss': 'x'},
+        header: const {'alg': 'HS256', 'typ': 'dc+sd-jwt'},
+      );
+      expect(
+        () => SdJwt.parse(compact).verifyIssuer(IssuerTrust.signatureOnly()),
+        throwsA(isA<SdJwtError>()),
+      );
+    });
+
+    test('rejects an unexpected or missing typ', () {
+      final wrongTyp = customSdJwt(
+        const {'iss': 'x'},
+        header: const {'alg': 'ES256', 'typ': 'jwt'},
+      );
+      expect(
+        () => SdJwt.parse(wrongTyp).verifyIssuer(IssuerTrust.signatureOnly()),
+        throwsA(isA<SdJwtError>()),
+      );
+
+      final noTyp = customSdJwt(
+        const {'iss': 'x'},
+        header: const {'alg': 'ES256'},
+      );
+      expect(
+        () => SdJwt.parse(noTyp).verifyIssuer(IssuerTrust.signatureOnly()),
+        throwsA(isA<SdJwtError>()),
+      );
+    });
+  });
+
+  group('metadata transport security', () {
+    test('refuses an http iss', () {
+      final compact = customSdJwt(const {'iss': 'http://issuer.example'});
+      expect(
+        () => SdJwt.parse(compact).verifyIssuer(
+          IssuerTrust.issuerMetadata(),
+          http: FakeOid4vcHttp.byPath(const {}),
+        ),
+        throwsA(isA<SdJwtError>()),
+      );
+    });
+
+    test('refuses an http jwks_uri', () {
+      final compact = customSdJwt(const {'iss': 'https://issuer.example'});
+      final http = FakeOid4vcHttp.byPath({
+        '/.well-known/jwt-vc-issuer': jsonResponse(
+          {'jwks_uri': 'http://issuer.example/keys.json'},
+        ),
       });
       expect(
         () => SdJwt.parse(compact)

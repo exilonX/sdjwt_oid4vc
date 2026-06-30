@@ -5,14 +5,25 @@ import 'package:crypto/crypto.dart';
 
 import '../core/b64u.dart';
 import '../core/clock.dart';
-import '../core/ec.dart';
 import '../core/errors.dart';
 import '../core/es256_signer.dart';
 import '../core/http.dart';
 import '../core/jws.dart';
 import 'disclosure.dart';
 import 'issuer_trust.dart';
+import 'issuer_verifier.dart';
 import 'kb_jwt.dart';
+import 'status_list.dart';
+
+/// The `typ` header values this codec accepts for an SD-JWT VC issuer JWT.
+/// `dc+sd-jwt` is the current SD-JWT VC media type; `vc+sd-jwt` is the older
+/// spelling still emitted by some deployments.
+const Set<String> _sdJwtVcTypes = {'dc+sd-jwt', 'vc+sd-jwt'};
+
+/// Hard cap on selective-disclosure nesting depth, so a maliciously deep
+/// credential cannot exhaust the stack while [SdJwtVc.resolveClaims] walks it.
+/// Real credentials nest only a few levels; 32 is comfortably above that.
+const int _maxResolveDepth = 32;
 
 /// Codec for the SD-JWT VC compact serialization
 /// `<issuer-JWT>~<disclosure>~…~[<KB-JWT>]`.
@@ -186,6 +197,11 @@ class SdJwtVc {
     return null;
   }
 
+  /// The structured status-list reference (`uri` + `idx`) for revocation, if
+  /// present — feed it to a `StatusListResolver` to learn whether this
+  /// credential is still valid.
+  StatusListRef? get statusListRef => StatusListRef.fromClaims(issuerClaims);
+
   /// Whether `exp` is in the past relative to the system clock.
   bool get isExpired => isExpiredAt(systemClock());
 
@@ -196,67 +212,109 @@ class SdJwtVc {
     return exp is int && nowEpochSeconds >= exp;
   }
 
+  /// `nbf` ("not before") — the epoch second the credential starts being valid,
+  /// if present.
+  int? get notBefore {
+    final nbf = issuerClaims['nbf'];
+    return nbf is int ? nbf : null;
+  }
+
+  /// Whether `nbf` is still in the future relative to the system clock.
+  bool get isNotYetValid => isNotYetValidAt(systemClock());
+
+  /// Whether [nowEpochSeconds] is before `nbf`. Returns `false` when there is no
+  /// `nbf`.
+  bool isNotYetValidAt(int nowEpochSeconds) {
+    final nbf = issuerClaims['nbf'];
+    return nbf is int && nowEpochSeconds < nbf;
+  }
+
+  /// Whether the credential is inside its validity window now (`nbf` reached and
+  /// `exp` not passed). Credentials with neither bound are always valid.
+  bool get isValid => isValidAt(systemClock());
+
+  /// Whether [nowEpochSeconds] is inside the credential's `nbf`..`exp` window.
+  bool isValidAt(int nowEpochSeconds) =>
+      !isExpiredAt(nowEpochSeconds) && !isNotYetValidAt(nowEpochSeconds);
+
   /// Reconstitutes the full claim set: registered claims plus every value that
   /// the carried disclosures reveal, with the `_sd` / `_sd_alg` / `{"...": …}`
   /// machinery removed. This is what a wallet shows the user.
-  Map<String, dynamic> resolveClaims() {
-    final byDigest = <String, Disclosure>{
-      for (final d in disclosures) d.digest(_hash): d,
-    };
-    return _resolveObject(issuerClaims, byDigest);
+  Map<String, dynamic> resolveClaims() =>
+      _resolveObject(issuerClaims, _byDigest(), <String>{}, 0);
+
+  /// Indexes the carried disclosures by their digest, rejecting two disclosures
+  /// that hash to the same digest. `_hash` is read only when there is something
+  /// to digest, so a credential with no disclosures never trips on an exotic
+  /// `_sd_alg`.
+  Map<String, Disclosure> _byDigest() {
+    final byDigest = <String, Disclosure>{};
+    if (disclosures.isNotEmpty) {
+      final hash = _hash;
+      for (final disclosure in disclosures) {
+        final digest = disclosure.digest(hash);
+        if (byDigest.containsKey(digest)) {
+          throw const SdJwtError('Two disclosures share the same digest');
+        }
+        byDigest[digest] = disclosure;
+      }
+    }
+    return byDigest;
   }
 
   /// Verifies the issuer signature, resolving the key per [trust].
   ///
-  /// Returns whether the signature is valid. Throws [SdJwtError] when the key
-  /// itself cannot be resolved (no `x5c`, unreachable metadata, malformed key) —
-  /// a different condition from "key found, signature does not match".
-  Future<bool> verifyIssuer(IssuerTrust trust, {Oid4vcHttp? http}) async {
-    switch (trust.mode) {
-      case IssuerTrustMode.x5cSignatureOnly:
-        final certs = _x5cCertificates();
-        try {
-          return verifyEs256WithX5c(
-            signingInput: _signingInput,
-            signature: _signature,
-            x5c: certs,
-          );
-        } on FormatException catch (e) {
-          throw SdJwtError('Invalid x5c leaf certificate', cause: e);
-        }
-      case IssuerTrustMode.issuerMetadata:
-        final jwk = await _issuerJwkFromMetadata(http);
-        try {
-          return verifyEs256WithJwk(
-            signingInput: _signingInput,
-            signature: _signature,
-            jwk: jwk,
-          );
-        } on FormatException catch (e) {
-          throw SdJwtError('Issuer JWK is not a usable P-256 key', cause: e);
-        }
-    }
+  /// Returns whether the signature is valid. Throws [SdJwtError] when the header
+  /// carries the wrong `alg`/`typ`, or when the key itself cannot be resolved
+  /// (no `x5c`, unreachable metadata, malformed key) — a different condition
+  /// from "key found, signature does not match".
+  ///
+  /// With [enforceValidity] set, a signature-valid credential that is outside
+  /// its `nbf`..`exp` window at [now] also returns `false` — so a single call
+  /// answers "is this a currently-trustworthy issuer signature?". The
+  /// [isExpired] / [isNotYetValid] getters let a caller tell the two apart.
+  Future<bool> verifyIssuer(
+    IssuerTrust trust, {
+    Oid4vcHttp? http,
+    bool enforceValidity = false,
+    Clock now = systemClock,
+  }) async {
+    final signatureValid = await verifyIssuerSignature(
+      header: header,
+      signingInput: _signingInput,
+      signature: _signature,
+      iss: issuerClaims['iss'],
+      trust: trust,
+      allowedTypes: _sdJwtVcTypes,
+      http: http,
+      now: now,
+    );
+    if (!signatureValid) return false;
+    if (enforceValidity && !isValidAt(now())) return false;
+    return true;
   }
 
-  /// Builds a presentation of this credential: discloses the claims named in
-  /// [disclose], computes `sd_hash`, signs a KB-JWT bound to [audience]/[nonce],
-  /// and returns `<issuer-JWT>~<chosen disclosures>~<KB-JWT>`.
+  /// Builds a presentation of this credential: discloses the chosen claims,
+  /// computes `sd_hash`, signs a KB-JWT bound to [audience]/[nonce], and returns
+  /// `<issuer-JWT>~<chosen disclosures>~<KB-JWT>`.
   ///
-  /// Only top-level object-property disclosures are selectable by name — which
-  /// is what our flat credentials use. [now] supplies the KB-JWT `iat`.
+  /// Two ways to choose what to reveal, unioned:
+  /// - [disclose] — top-level object-property names (the flat-credential case).
+  /// - [disclosePaths] — full DCQL claim paths (`["address","street"]`,
+  ///   `[1]`, or `[null]` for every array element), which also pulls in the
+  ///   parent disclosures a nested claim needs to resolve.
+  ///
+  /// [now] supplies the KB-JWT `iat`.
   Future<String> present({
-    required Set<String> disclose,
+    Set<String> disclose = const {},
+    Set<List<Object?>> disclosePaths = const {},
     required String audience,
     required String nonce,
     required Es256Signer signer,
     Clock now = systemClock,
   }) async {
-    final chosen = disclosures
-        .where((d) => d.name != null && disclose.contains(d.name))
-        .toList();
-
     final prefix = StringBuffer('$issuerJwt~');
-    for (final disclosure in chosen) {
+    for (final disclosure in _selectDisclosures(disclose, disclosePaths)) {
       prefix.write('${disclosure.encoded}~');
     }
     final presented = prefix.toString();
@@ -271,6 +329,104 @@ class SdJwtVc {
     return '$presented$kb';
   }
 
+  /// The disclosures to include for [disclose] (top-level names) ∪
+  /// [disclosePaths] (full paths, with each match's ancestor chain), emitted in
+  /// the credential's original disclosure order.
+  List<Disclosure> _selectDisclosures(
+    Set<String> disclose,
+    Set<List<Object?>> disclosePaths,
+  ) {
+    final include = <Disclosure>{};
+    // Name-based: any object-property disclosure with a requested name, at any
+    // depth — this is the flat / "reveal whole" behaviour.
+    for (final disclosure in disclosures) {
+      if (disclosure.name != null && disclose.contains(disclosure.name)) {
+        include.add(disclosure);
+      }
+    }
+    // Path-based: each site whose path a request matches, plus the ancestor
+    // disclosures that path depends on to resolve.
+    if (disclosePaths.isNotEmpty) {
+      for (final site in _disclosureSites()) {
+        if (disclosePaths.any((path) => _pathMatches(path, site.path))) {
+          include.addAll(site.chain);
+        }
+      }
+    }
+    return disclosures.where(include.contains).toList();
+  }
+
+  /// Walks the issuer claims and records, for every disclosure, the path it
+  /// sits at and the chain of disclosures that must be revealed to reach it.
+  List<_DisclosureSite> _disclosureSites() {
+    final byDigest = _byDigest();
+    final sites = <_DisclosureSite>[];
+
+    void walk(
+      dynamic node,
+      List<Object?> path,
+      List<Disclosure> chain,
+      int depth,
+    ) {
+      if (depth > _maxResolveDepth) {
+        throw const SdJwtError('Credential nesting exceeds the depth limit');
+      }
+      if (node is Map<String, dynamic>) {
+        node.forEach((key, value) {
+          if (key == '_sd') {
+            if (value is! List) return;
+            for (final digest in value) {
+              if (digest is! String) continue;
+              final disclosure = byDigest[digest];
+              if (disclosure == null || disclosure.name == null) continue;
+              final childPath = [...path, disclosure.name];
+              final childChain = [...chain, disclosure];
+              sites.add(_DisclosureSite(childPath, childChain));
+              walk(disclosure.value, childPath, childChain, depth + 1);
+            }
+          } else if (key != '_sd_alg') {
+            walk(value, [...path, key], chain, depth + 1);
+          }
+        });
+      } else if (node is List) {
+        for (var i = 0; i < node.length; i++) {
+          final element = node[i];
+          if (element is Map<String, dynamic> &&
+              element.length == 1 &&
+              element['...'] is String) {
+            final disclosure = byDigest[element['...']];
+            if (disclosure == null || disclosure.name != null) continue;
+            final childPath = [...path, i];
+            final childChain = [...chain, disclosure];
+            sites.add(_DisclosureSite(childPath, childChain));
+            walk(disclosure.value, childPath, childChain, depth + 1);
+          } else {
+            walk(element, [...path, i], chain, depth + 1);
+          }
+        }
+      }
+    }
+
+    walk(issuerClaims, const [], const [], 0);
+    return sites;
+  }
+
+  /// Whether the DCQL [requested] path selects the disclosure at [sitePath]. A
+  /// `null` element is the DCQL "all array elements" wildcard, matching any int
+  /// index; everything else must match exactly.
+  static bool _pathMatches(List<Object?> requested, List<Object?> sitePath) {
+    if (requested.length != sitePath.length) return false;
+    for (var i = 0; i < requested.length; i++) {
+      final want = requested[i];
+      if (want == null) {
+        if (sitePath[i] is! int) return false;
+      } else if (want != sitePath[i]) {
+        return false;
+      }
+    }
+    return true;
+  }
+
   // --- internals -----------------------------------------------------------
 
   Hash get _hash => _hashForAlg(issuerClaims['_sd_alg']);
@@ -282,102 +438,21 @@ class SdJwtVc {
         _ => throw SdJwtError('Unsupported _sd_alg: $alg'),
       };
 
-  List<String> _x5cCertificates() {
-    final x5c = header['x5c'];
-    if (x5c is! List) {
-      throw const SdJwtError(
-        'Header has no x5c; cannot use signatureOnly trust',
-      );
-    }
-    final certs = x5c.whereType<String>().toList();
-    if (certs.isEmpty) {
-      throw const SdJwtError('Header x5c contains no certificates');
-    }
-    return certs;
-  }
-
-  Future<Map<String, dynamic>> _issuerJwkFromMetadata(Oid4vcHttp? http) async {
-    if (http == null) {
-      throw const SdJwtError('issuerMetadata trust requires an Oid4vcHttp');
-    }
-    final iss = issuerClaims['iss'];
-    if (iss is! String) {
-      throw const SdJwtError('Credential has no string iss claim');
-    }
-    final issuerUri = Uri.tryParse(iss);
-    if (issuerUri == null || !issuerUri.isAbsolute) {
-      throw SdJwtError('iss is not an absolute URI: $iss');
-    }
-
-    final metadata = await _getJson(http, _wellKnownJwtVcIssuer(issuerUri));
-    final keys = await _resolveJwks(metadata, http);
-    return _selectJwk(keys, header['kid']);
-  }
-
-  Future<Map<String, dynamic>> _getJson(Oid4vcHttp http, Uri url) async {
-    final resp = await http.get(url);
-    if (!resp.ok) {
-      throw SdJwtError(
-        'Issuer metadata fetch failed (${resp.statusCode}) for $url',
-      );
-    }
-    return resp.json();
-  }
-
-  Future<List<Map<String, dynamic>>> _resolveJwks(
-    Map<String, dynamic> metadata,
-    Oid4vcHttp http,
-  ) async {
-    final inline = metadata['jwks'];
-    if (inline is Map<String, dynamic>) return _keysOf(inline);
-
-    final jwksUri = metadata['jwks_uri'];
-    if (jwksUri is String) {
-      final uri = Uri.tryParse(jwksUri);
-      if (uri == null || !uri.isAbsolute) {
-        throw SdJwtError('jwks_uri is not an absolute URI: $jwksUri');
-      }
-      return _keysOf(await _getJson(http, uri));
-    }
-    throw const SdJwtError('Issuer metadata has neither jwks nor jwks_uri');
-  }
-
-  List<Map<String, dynamic>> _keysOf(Map<String, dynamic> jwks) {
-    final keys = jwks['keys'];
-    if (keys is! List) {
-      throw const SdJwtError('JWK set has no keys array');
-    }
-    return keys.whereType<Map<String, dynamic>>().toList();
-  }
-
-  Map<String, dynamic> _selectJwk(
-    List<Map<String, dynamic>> keys,
-    Object? kid,
-  ) {
-    if (keys.isEmpty) {
-      throw const SdJwtError('Issuer JWK set is empty');
-    }
-    if (kid is String) {
-      for (final key in keys) {
-        if (key['kid'] == kid) return key;
-      }
-    }
-    return keys.first;
-  }
-
-  static Uri _wellKnownJwtVcIssuer(Uri iss) {
-    final issuerPath = iss.path == '/' ? '' : iss.path;
-    return iss.replace(path: '/.well-known/jwt-vc-issuer$issuerPath');
-  }
-
+  /// Resolves an object level, splicing in the disclosures whose digests appear
+  /// in its `_sd`. [consumed] tracks every digest already spliced anywhere in
+  /// the credential, so a digest reused twice (a disclosure-substitution trick)
+  /// is rejected; a disclosed name that collides with a claim already at this
+  /// level is rejected too. Both are SD-JWT processing rules.
   Map<String, dynamic> _resolveObject(
     Map<String, dynamic> object,
     Map<String, Disclosure> byDigest,
+    Set<String> consumed,
+    int depth,
   ) {
     final out = <String, dynamic>{};
     object.forEach((key, value) {
       if (key == '_sd' || key == '_sd_alg') return;
-      out[key] = _resolveValue(value, byDigest);
+      out[key] = _resolveValue(value, byDigest, consumed, depth + 1);
     });
 
     final sd = object['_sd'];
@@ -385,9 +460,14 @@ class SdJwtVc {
       for (final digest in sd) {
         if (digest is! String) continue;
         final disclosure = byDigest[digest];
-        if (disclosure != null && disclosure.name != null) {
-          out[disclosure.name!] = _resolveValue(disclosure.value, byDigest);
+        if (disclosure == null || disclosure.name == null) continue;
+        _consume(digest, consumed);
+        final name = disclosure.name!;
+        if (out.containsKey(name)) {
+          throw SdJwtError('Disclosed claim "$name" collides with a clear one');
         }
+        out[name] =
+            _resolveValue(disclosure.value, byDigest, consumed, depth + 1);
       }
     }
     return out;
@@ -396,27 +476,61 @@ class SdJwtVc {
   List<dynamic> _resolveArray(
     List<dynamic> array,
     Map<String, Disclosure> byDigest,
+    Set<String> consumed,
+    int depth,
   ) {
     final out = <dynamic>[];
     for (final element in array) {
       if (element is Map<String, dynamic> &&
           element.length == 1 &&
           element['...'] is String) {
-        final disclosure = byDigest[element['...']];
+        final digest = element['...'] as String;
+        final disclosure = byDigest[digest];
         if (disclosure != null && disclosure.name == null) {
-          out.add(_resolveValue(disclosure.value, byDigest));
+          _consume(digest, consumed);
+          out.add(
+            _resolveValue(disclosure.value, byDigest, consumed, depth + 1),
+          );
         }
         // An undisclosed array element is simply omitted.
       } else {
-        out.add(_resolveValue(element, byDigest));
+        out.add(_resolveValue(element, byDigest, consumed, depth + 1));
       }
     }
     return out;
   }
 
-  dynamic _resolveValue(dynamic value, Map<String, Disclosure> byDigest) {
-    if (value is Map<String, dynamic>) return _resolveObject(value, byDigest);
-    if (value is List) return _resolveArray(value, byDigest);
+  dynamic _resolveValue(
+    dynamic value,
+    Map<String, Disclosure> byDigest,
+    Set<String> consumed,
+    int depth,
+  ) {
+    if (depth > _maxResolveDepth) {
+      throw const SdJwtError('Credential nesting exceeds the depth limit');
+    }
+    if (value is Map<String, dynamic>) {
+      return _resolveObject(value, byDigest, consumed, depth);
+    }
+    if (value is List) return _resolveArray(value, byDigest, consumed, depth);
     return value;
   }
+
+  void _consume(String digest, Set<String> consumed) {
+    if (!consumed.add(digest)) {
+      throw const SdJwtError(
+        'A disclosure digest is referenced more than once',
+      );
+    }
+  }
+}
+
+/// Where one disclosure sits in the credential: its [path] (object keys and
+/// array indices from the root) and the [chain] of disclosures — itself plus
+/// every ancestor disclosure — that must be revealed together to expose it.
+class _DisclosureSite {
+  _DisclosureSite(this.path, this.chain);
+
+  final List<Object?> path;
+  final List<Disclosure> chain;
 }

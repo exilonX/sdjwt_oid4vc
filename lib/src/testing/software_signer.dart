@@ -65,16 +65,23 @@ class SoftwareEs256Signer implements Es256Signer {
   }
 
   @override
-  Future<String> signEs256(String signingInput) async {
+  Future<String> signEs256(String signingInput) async =>
+      b64uEncode(signBytes(utf8.encode(signingInput)));
+
+  /// Signs raw [message] bytes with ES256 (low-S), returning the 64-byte `R‖S`.
+  /// Useful when acting as a test issuer signing non-JOSE bytes — e.g. an X.509
+  /// TBSCertificate when building a chain fixture. [signEs256] is the
+  /// JOSE-string variant most callers want.
+  Uint8List signBytes(List<int> message) {
     final signer = ECDSASigner(SHA256Digest(), HMac(SHA256Digest(), 64))
       ..init(true, PrivateKeyParameter<ECPrivateKey>(_private));
     final signature = signer.generateSignature(
-      Uint8List.fromList(utf8.encode(signingInput)),
+      Uint8List.fromList(message),
     ) as ECSignature;
 
     final n = _private.parameters!.n;
     final s = signature.s.compareTo(n >> 1) > 0 ? n - signature.s : signature.s;
-    return b64uEncode([..._be32(signature.r), ..._be32(s)]);
+    return Uint8List.fromList([..._be32(signature.r), ..._be32(s)]);
   }
 
   @override

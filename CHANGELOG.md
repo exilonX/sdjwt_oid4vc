@@ -1,5 +1,40 @@
 # Changelog
 
+## 0.1.0-dev.2 (unreleased)
+
+Security hardening and the features a general-purpose wallet needs before
+production. All additive — existing call sites keep working.
+
+- **Hardening (sdjwt/core)** — `verifyIssuer` now asserts the issuer JWT
+  `alg`/`typ` before any key work (key resolution shared via a new internal
+  `issuer_verifier`); `resolveClaims` bounds nesting depth and rejects duplicate
+  disclosure digests and disclosed/clear claim collisions; all fetched URLs
+  (metadata, JWKS, status lists, offers, request objects) must be `https`
+  (loopback `http` allowed for dev).
+- **Issuer chain validation** — new `IssuerTrust.x5cChain(trustAnchors)` mode
+  validates the `x5c` chain (each link's ECDSA-SHA256 signature, every
+  certificate's validity window, and anchoring to a caller-supplied trust
+  anchor) before verifying with the leaf key. The Trusted List itself (the EU
+  LOTL — which anchors) is app-provided; revocation (CRL/OCSP) and name/policy
+  constraints remain out of scope.
+- **Validity** — `notBefore` / `isNotYetValid` / `isValid(At)` getters, and an
+  optional `enforceValidity` on `verifyIssuer` that folds the `nbf`..`exp`
+  window into the result.
+- **RP authentication (oid4vp)** — `PresentationRequest.signature` now exposes
+  the request object's signing material (`x5c`, `alg`, `kid`, signing input)
+  with `verifyWithX5cLeaf()` / `verifyWithJwk()` helpers, plus
+  `clientIdScheme` / `clientIdValue`. The wallet still owns the trust decision.
+- **Revocation** — `StatusListResolver` + `StatusListRef` / `CredentialStatus`
+  resolve a credential's Token Status List entry (fetch, optional signature
+  verification, zlib inflate, bit read). `SdJwtVc.statusListRef` exposes the
+  reference. Adds an `archive` dependency for zlib inflate.
+- **Multi-credential DCQL** — parses `credential_sets`; `matchAll`,
+  `satisfiesRequest`, and `buildVpTokenObject` handle requests for several
+  credentials at once.
+- **Nested presentation** — `present` gains `disclosePaths` (full DCQL claim
+  paths, including nested objects, array indices, and the `null` "all elements"
+  wildcard), pulling in each path's ancestor disclosures.
+
 ## 0.1.0-dev.1 (unreleased)
 
 Initial implementation of the holder/wallet protocol stack.
