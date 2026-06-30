@@ -1,0 +1,68 @@
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+
+# Cancel superseded runs on the same ref.
+concurrency:
+  group: ci-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  analyze-test:
+    name: Analyze · Test (Dart ${{ matrix.sdk }})
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        # Pin the declared lower bound so the floor in pubspec.yaml is actually
+        # exercised, not just "whatever stable happens to be".
+        sdk: ["3.4.0", stable]
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dart-lang/setup-dart@v1
+        with:
+          sdk: ${{ matrix.sdk }}
+      - run: dart --version
+      - name: Install dependencies
+        run: dart pub get
+      # Formatting/coverage track the latest formatter+tooling, so gate them on
+      # stable; the min-SDK job still compiles, analyzes, tests, and runs the example.
+      - name: Verify formatting
+        if: matrix.sdk == 'stable'
+        run: dart format --output=none --set-exit-if-changed .
+      - name: Analyze
+        run: dart analyze ${{ matrix.sdk == 'stable' && '--fatal-infos' || '' }}
+      - name: Run tests with coverage
+        run: dart test --coverage=coverage
+      - name: Format coverage to lcov
+        if: matrix.sdk == 'stable'
+        run: >-
+          dart run coverage:format_coverage --lcov
+          --in=coverage --out=coverage/lcov.info
+          --report-on=lib --packages=.dart_tool/package_config.json
+      - name: Upload coverage to Codecov
+        if: matrix.sdk == 'stable'
+        uses: codecov/codecov-action@v4
+        with:
+          files: coverage/lcov.info
+          fail_ci_if_error: false # never block CI on a coverage-upload hiccup
+        # Public repos upload tokenless; for a private repo add a CODECOV_TOKEN secret.
+      - name: Smoke-test the example
+        run: dart run example/sdjwt_oid4vc_example.dart
+
+  release-checks:
+    name: Release checks (publish dry-run)
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dart-lang/setup-dart@v1
+        with:
+          sdk: stable
+      - run: dart pub get
+      # A clean publishability gate on every PR: catches missing LICENSE,
+      # bad pubspec metadata, stray files, oversized package, etc.
+      - name: Publish dry-run
+        run: dart pub publish --dry-run

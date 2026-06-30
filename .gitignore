@@ -1,0 +1,14 @@
+# Dart / pub
+.dart_tool/
+.packages
+build/
+pubspec.lock # library package: do not pin
+
+# Coverage
+coverage/
+*.lcov
+
+# IDE
+.idea/
+*.iml
+.vscode/

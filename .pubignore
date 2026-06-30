@@ -1,0 +1,9 @@
+# Files kept in the repo (for contributors) but NOT shipped to pub.dev
+# consumers. README/CONTEXT links to these still resolve against the repository.
+
+# Internal design proposal + EUDI program onboarding (project context, not API).
+docs/
+# Claude Code agent guide.
+CLAUDE.md
+# Local coverage output, if present.
+coverage/
