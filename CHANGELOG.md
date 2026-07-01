@@ -1,9 +1,9 @@
 # Changelog
 
-## 0.1.0-dev.2 (unreleased)
+## 0.1.0-dev.1
 
-Security hardening and the features a general-purpose wallet needs before
-production. All additive — existing call sites keep working.
+First pre-release. Security hardening and the features a general-purpose wallet
+needs before production. All additive — existing call sites keep working.
 
 - **Hardening (sdjwt/core)** — `verifyIssuer` now asserts the issuer JWT
   `alg`/`typ` before any key work (key resolution shared via a new internal
