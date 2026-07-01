@@ -6,6 +6,18 @@ updates:
     schedule:
       interval: "weekly"
     open-pull-requests-limit: 5
+    ignore:
+      # We deliberately keep the SDK floor at Dart 3.4.0 so wallets pinned to an
+      # older SDK can consume this package (see pubspec.yaml `environment.sdk`
+      # and the "Compat" CI job). These dev-only tools raise their own SDK floor
+      # past 3.4.0 in newer releases, which would break the min-SDK CI job.
+      # The caret constraints already let pub pick a compatible version per SDK,
+      # so there's nothing to gain from bumping the declared floor. Revisit these
+      # ignores if/when the supported SDK floor is raised.
+      - dependency-name: "lints"
+        versions: [">=5.0.0"] # 5.x requires Dart ^3.5.0, 6.x requires ^3.8.0
+      - dependency-name: "test"
+        versions: [">=1.25.9"] # 1.25.9 requires Dart ^3.5.0 (1.25.8 still ^3.4.0)
 
   # GitHub Actions used by the workflows above.
   - package-ecosystem: "github-actions"
