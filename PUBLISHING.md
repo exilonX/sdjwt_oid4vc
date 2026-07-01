@@ -6,16 +6,13 @@ automated over GitHub OIDC by pushing a version tag.
 
 ## Version to publish first
 
-The package is at **`0.1.0-dev.2`** (see `pubspec.yaml` / `CHANGELOG.md`) and
-nothing is published yet, so that is your first pre-release — pub.dev does **not**
-require a `dev.1` to exist first. Publishing a `-dev.N` pre-release means `pub
-get` only resolves it when a consumer explicitly opts in (`sdjwt_oid4vc:
-^0.1.0-dev.2`), which is exactly what you want before `0.1.0`.
+The package is at **`0.1.0-dev.1`** (see `pubspec.yaml` / `CHANGELOG.md`) — the
+first pre-release. Publishing a `-dev.N` pre-release means `pub get` only
+resolves it when a consumer explicitly opts in (`sdjwt_oid4vc: ^0.1.0-dev.1`),
+which is exactly what you want while the API settles before `0.1.0`.
 
-> If you specifically want the `-dev.1` label for the first tag, change
-> `version:` to `0.1.0-dev.1` and rename the top `CHANGELOG.md` heading before
-> tagging. The only hard rule is that each *subsequent* publish must have a
-> strictly higher version than the last.
+> The only hard rule is that each *subsequent* publish must have a strictly
+> higher version than the last (`0.1.0-dev.2`, … then `0.1.0`).
 
 ## 1. Pre-flight (local, must all be clean)
 
@@ -48,7 +45,7 @@ This registers you as the package **uploader**. Keep this account secure — for
 day-to-day releases you won't use it again (the tag-triggered workflow does).
 
 > Tie the release to a tag so the source is reproducible:
-> `git tag v0.1.0-dev.2 && git push origin v0.1.0-dev.2` (see step 4 — after
+> `git tag v0.1.0-dev.1 && git push origin v0.1.0-dev.1` (see step 4 — after
 > automated publishing is on, the tag push *is* the release).
 
 ## 3. Configure automated publishing (one time, on pub.dev)
