@@ -6,7 +6,7 @@ void main() {
     test('reads issuer, config ids and the pre-authorized grant', () {
       final offer = CredentialOffer.fromJson({
         'credential_issuer': 'https://issuer.example',
-        'credential_configuration_ids': ['extras_salariat'],
+        'credential_configuration_ids': ['example_credential'],
         'grants': {
           preAuthorizedCodeGrant: {
             'pre-authorized_code': 'PAC',
@@ -19,7 +19,7 @@ void main() {
         },
       });
       expect(offer.issuer, 'https://issuer.example');
-      expect(offer.configIds, ['extras_salariat']);
+      expect(offer.configIds, ['example_credential']);
       expect(offer.preAuthCode, 'PAC');
       expect(offer.txCodeRequired, isTrue);
       expect(offer.txCodeLength, 6);
