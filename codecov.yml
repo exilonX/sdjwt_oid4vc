@@ -1,0 +1,13 @@
+# Encode the project's invariant: 100% line coverage, no drops.
+# target 100% + threshold 0% => coverage must stay at 100%; the patch check
+# means every new line in a PR must be covered.
+coverage:
+  status:
+    project:
+      default:
+        target: 100%
+        threshold: 0%
+    patch:
+      default:
+        target: 100%
+        threshold: 0%
