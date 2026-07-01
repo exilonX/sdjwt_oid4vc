@@ -4,8 +4,7 @@ Engineering notes for whoever (agent or human) works on this package next. The
 *why* and the *current state*, not a re-statement of the code.
 
 > Read first: [`docs/SDJWT_OID4VC_LIB.md`](docs/SDJWT_OID4VC_LIB.md) (the design
-> proposal this implements) and [`docs/EUDI_ONBOARDING.md`](docs/EUDI_ONBOARDING.md)
-> (the EUDI program this serves). README.md is the user-facing intro.
+> proposal this implements). README.md is the user-facing intro.
 
 ## 1. What this is and who uses it
 
@@ -33,11 +32,11 @@ authentication** (request-object signature exposed for the wallet to verify),
 What stays the app's: the **Trusted List data** itself (which anchors / the EU
 LOTL), and certificate **revocation** (CRL/OCSP) — see §4, §7.
 
-Proven elsewhere in the program: the full issue→present→verify loop works on
-the reference EUDI wallet with the real IM seal. This library is the native
-re-implementation of the holder half; it has **not yet been wired into
-`roeid_flutter`** or run against the live `reges-eudi` issuer / verifier — that
-is the next milestone (§7).
+The full issue→present→verify loop has been proven end-to-end against a
+reference EUDI wallet and a real qualified issuer seal. This library is the
+native Dart re-implementation of the holder half; it has **not yet been wired
+into a production wallet** or run against a live issuer / verifier — that is the
+next milestone (§7).
 
 ## 3. Architecture
 
@@ -115,9 +114,8 @@ crypto backends, this is the one file to change.
   (`RequestObjectSignature`) exposes the `x5c`/header/signing-input and offers
   `verifyWithX5cLeaf()` / `verifyWithJwk()` to confirm *integrity*. The wallet
   still owns the *trust* decision (chain to a reader trust anchor, SAN matches
-  `clientIdValue`). So the three-key table in `EUDI_ONBOARDING.md §4` now reads:
-  key (1) issuer and key (3) holder fully here; key (2) RP — verify mechanism
-  here, trust policy in the app.
+  `clientIdValue`). The three keys split like this: key (1) issuer and key (3)
+  holder fully here; key (2) RP — verify mechanism here, trust policy in the app.
 - **`alg`/`typ` asserted before key work.** Defence-in-depth (the verify path is
   ES256-only regardless, so alg-confusion was never exploitable) plus
   cross-type-confusion protection (a status list token can't pass where a
@@ -162,8 +160,8 @@ The doc is a *proposal*; these pragmatic changes were made while implementing:
 
 ## 6. Wire-format notes / things to confirm against the live issuer
 
-These follow current OID4VCI/VP drafts but the reference deployments evolve —
-verify against `reges-eudi` / `reges-eudi-verifier` when integrating:
+These follow current OID4VCI/VP drafts but live deployments evolve — verify
+against your target issuer / verifier when integrating:
 
 - **Credential request body** uses `{credential_configuration_id, proof:
   {proof_type:jwt, jwt}}` and reads back both `credential` (string) and the
@@ -202,10 +200,10 @@ verify against `reges-eudi` / `reges-eudi-verifier` when integrating:
 1. Wire into `roeid_flutter`: implement `AttestedKeysSigner` (see
    `example/README.md`), one signer per credential (alias = credential id,
    `auth-required`).
-2. Run the real loop: redeem a live `extras_salariat` offer from `reges-eudi`,
-   present to `reges-eudi-verifier`. Capture real test vectors (a real offer, a
-   real DCQL request, a real issuer `x5c`) and add them as fixtures.
-3. PID (`urn:eudi:pid:1`) once `pscid-eudi` exists — same transport, possibly
+2. Run the real loop against a live issuer/verifier: redeem an offer, present
+   the credential. Capture real test vectors (a real offer, a real DCQL request,
+   a real issuer `x5c`) and add them as fixtures.
+3. PID (`urn:eudi:pid:1`) once a PID issuer exists — same transport, possibly
    new claim shapes; resolve-claims already handles nested objects + arrays, and
    `present(disclosePaths:)` now selects nested/array claims by DCQL path.
 4. **Trust anchors / LOTL wiring** — the chain *mechanism* is done

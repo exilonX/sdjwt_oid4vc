@@ -132,7 +132,6 @@ is out of scope.
 
 ## Context
 
-Built for the ROeID EUDI wallet (`roeid_flutter`). Background:
-[`docs/EUDI_ONBOARDING.md`](docs/EUDI_ONBOARDING.md), design rationale:
+Built for an EUDI wallet (holder role). Design rationale:
 [`docs/SDJWT_OID4VC_LIB.md`](docs/SDJWT_OID4VC_LIB.md), engineering notes for
 contributors: [`CONTEXT.md`](CONTEXT.md).
