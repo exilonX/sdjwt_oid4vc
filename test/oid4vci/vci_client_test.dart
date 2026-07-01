@@ -16,7 +16,7 @@ final _issuerMeta = {
   'credential_endpoint': '$_issuer/credential',
   'nonce_endpoint': '$_issuer/nonce',
   'credential_configurations_supported': {
-    'extras_salariat': {
+    'example_credential': {
       'vct': '$_issuer/extras/v1',
       'format': 'dc+sd-jwt',
     },
@@ -25,7 +25,7 @@ final _issuerMeta = {
 
 String _offerJson({bool txCode = true}) => jsonEncode({
       'credential_issuer': _issuer,
-      'credential_configuration_ids': ['extras_salariat'],
+      'credential_configuration_ids': ['example_credential'],
       'grants': {
         preAuthorizedCodeGrant: {
           'pre-authorized_code': 'PAC',
@@ -68,7 +68,7 @@ void main() {
     test('parses a deep link with an inline credential_offer', () async {
       final link =
           'openid-credential-offer://?credential_offer=${Uri.encodeQueryComponent(_offerJson())}';
-      expect((await client.parseOffer(link)).configIds, ['extras_salariat']);
+      expect((await client.parseOffer(link)).configIds, ['example_credential']);
     });
 
     test('follows credential_offer_uri', () async {
@@ -116,7 +116,7 @@ void main() {
       expect(meta.credentialEndpoint, Uri.parse('$_issuer/credential'));
       expect(meta.tokenEndpoint, Uri.parse('$_issuer/token'));
       expect(meta.nonceEndpoint, Uri.parse('$_issuer/nonce'));
-      expect(meta.vcts, {'extras_salariat': '$_issuer/extras/v1'});
+      expect(meta.vcts, {'example_credential': '$_issuer/extras/v1'});
     });
 
     test('uses an inline token_endpoint when present', () async {
@@ -318,12 +318,12 @@ void main() {
         meta: meta,
         token: token,
         proofJwt: 'PROOF',
-        credentialConfigurationId: 'extras_salariat',
+        credentialConfigurationId: 'example_credential',
       );
       expect(result, 'C1');
       expect(http.last.headers!['authorization'], 'Bearer AT');
       final body = http.last.body! as Map<String, dynamic>;
-      expect(body['credential_configuration_id'], 'extras_salariat');
+      expect(body['credential_configuration_id'], 'example_credential');
       expect(body['proof'], {'proof_type': 'jwt', 'jwt': 'PROOF'});
       expect(body.containsKey('key_attestation'), isFalse);
     });

@@ -64,7 +64,7 @@ void main() {
     });
     final offer = jsonEncode({
       'credential_issuer': issuer,
-      'credential_configuration_ids': ['extras_salariat'],
+      'credential_configuration_ids': ['example_credential'],
       'grants': {
         preAuthorizedCodeGrant: {
           'pre-authorized_code': 'PAC',

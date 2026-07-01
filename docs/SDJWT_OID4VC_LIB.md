@@ -1,8 +1,7 @@
 # `sdjwt_oid4vc` — librărie Dart de protocol SD-JWT VC + OpenID4VCI/OpenID4VP (rol holder)
 
 > Propunere de design + interfață publică. **Pachet Dart standalone, publicabil pe pub.dev**, repo propriu
-> (ca `attested_secure_keys`). Acum doc-ul stă în `roeid_flutter/docs`; se mută în repo-ul `sdjwt_oid4vc` la creare.
-> Context: `reges-wallet-issuer/docs/EUDI_ONBOARDING.md`. Consumator: [EUDI_WALLET_PLAN.md](EUDI_WALLET_PLAN.md).
+> (ca `attested_secure_keys`). Consumator tipic: un portofel EUDI Dart (rol holder).
 
 ---
 
@@ -195,10 +194,10 @@ librăriei. Atât. Restul (proof, KB-JWT, disclosures) e logică pură în libr�
 - **mdoc / ISO 18013** (CBOR/COSE, proximity) — codec separat, viitor (transport-ul e pregătit, §2.4).
 - **W3C JSON-LD VC / BBS+**.
 - **OIDC login** (ăla e `openid_client`/`oidc`).
-- **Rolurile issuer/verifier** (server-side: reges-eudi, pscid-eudi, verifier).
+- **Rolurile issuer/verifier** (server-side: emitent, verifier).
 - **Stocarea** credențialelor (e a app-ului — Hive criptat; librăria întoarce/primește string-uri).
 
 ## 7. Testare
 Cu un **`SoftwareEs256Signer`** (cheie EC P-256 în memorie) + un **`FakeOid4vcHttp`** (răspunsuri canate),
 toată logica (offer→token→proof→credential, request→disclose→KB-JWT→submit) se testează **fără hardware și
-fără rețea**. Vectori de test: emitere reală de la reges-eudi (extras_salariat) + cereri DCQL de la verifierul nostru.
+fără rețea**. Vectori de test: emitere reală de la un emitent live + cereri DCQL de la un verifier live.
