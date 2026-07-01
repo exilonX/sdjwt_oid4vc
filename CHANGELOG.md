@@ -1,5 +1,11 @@
 # Changelog
 
+## 0.1.0-dev.2
+
+No library changes since `dev.1`. This release validates the automated,
+tag-triggered pub.dev publish pipeline (OIDC) end-to-end — `dev.1` was published
+by hand.
+
 ## 0.1.0-dev.1
 
 First pre-release. Security hardening and the features a general-purpose wallet
