@@ -1,12 +1,13 @@
 name: Publish to pub.dev
 
-# Tokenless automated publishing via pub.dev + GitHub OIDC.
+# Tokenless automated publishing via pub.dev + GitHub OIDC — same setup proven
+# out in the attested_secure_keys package.
 #
-# One-time setup on pub.dev once the package exists there:
+# One-time setup on pub.dev:
 #   Admin → Automated publishing → Enable publishing from GitHub Actions,
-#   set the repository (exilonX/sdjwt_oid4vc) and a tag pattern: v{{version}}
+#   repository exilonX/sdjwt_oid4vc, tag pattern: v{{version}}
 #
-# Then publish by pushing a tag that matches the pubspec version, e.g.:
+# Then release by pushing a semver tag that matches pubspec `version:`, e.g.:
 #   git tag v0.1.0-dev.1 && git push origin v0.1.0-dev.1
 #
 # The reusable workflow checks out, runs `dart pub publish --dry-run`, verifies
@@ -14,11 +15,11 @@ name: Publish to pub.dev
 
 on:
   push:
-    tags: ["v*"]
+    tags:
+      - 'v[0-9]+.[0-9]+.[0-9]+*'
 
 jobs:
   publish:
     permissions:
-      id-token: write # REQUIRED for pub.dev OIDC — do not remove.
-    # Pinned to a commit SHA (Dependabot keeps it current).
-    uses: dart-lang/setup-dart/.github/workflows/publish.yml@65eb853c7ba17dde3be364c3d2858773e7144260 # v1.7.2
+      id-token: write # Required for authentication using OIDC
+    uses: dart-lang/setup-dart/.github/workflows/publish.yml@v1
