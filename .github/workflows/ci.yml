@@ -10,10 +10,18 @@ concurrency:
   group: ci-${{ github.ref }}
   cancel-in-progress: true
 
+# Least privilege by default; jobs widen only what they need. Actions are pinned
+# to full commit SHAs (Dependabot's github-actions updater keeps them current).
+permissions:
+  contents: read
+
 jobs:
   analyze-test:
     name: Analyze · Test (Dart ${{ matrix.sdk }})
     runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      id-token: write # Codecov tokenless (OIDC) upload
     strategy:
       fail-fast: false
       matrix:
@@ -21,8 +29,8 @@ jobs:
         # exercised, not just "whatever stable happens to be".
         sdk: ["3.4.0", stable]
     steps:
-      - uses: actions/checkout@v4
-      - uses: dart-lang/setup-dart@v1
+      - uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4
+      - uses: dart-lang/setup-dart@65eb853c7ba17dde3be364c3d2858773e7144260 # v1.7.2
         with:
           sdk: ${{ matrix.sdk }}
       - run: dart --version
@@ -45,7 +53,7 @@ jobs:
           --report-on=lib --packages=.dart_tool/package_config.json
       - name: Upload coverage to Codecov
         if: matrix.sdk == 'stable'
-        uses: codecov/codecov-action@v4
+        uses: codecov/codecov-action@b9fd7d16f6d7d1b5d2bec1a2887e65ceed900238 # v4
         with:
           files: coverage/lcov.info
           fail_ci_if_error: false # never block CI on a coverage-upload hiccup
@@ -60,12 +68,13 @@ jobs:
     # (PDF/NFC) resolve with no override. Pin it to the floor here and run the
     # full suite, so a 4.x-only API can never slip in and break those consumers.
     steps:
-      - uses: actions/checkout@v4
-      - uses: dart-lang/setup-dart@v1
+      - uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4
+      - uses: dart-lang/setup-dart@65eb853c7ba17dde3be364c3d2858773e7144260 # v1.7.2
         with:
           sdk: stable
       - name: Pin pointycastle to the floor
-        run: printf '\ndependency_overrides:\n  pointycastle: 3.9.1\n' >> pubspec.yaml
+        run: |
+          printf '\ndependency_overrides:\n  pointycastle: 3.9.1\n' >> pubspec.yaml
       - run: dart pub get
       - name: Show resolved pointycastle
         run: dart pub deps | grep pointycastle
@@ -76,8 +85,8 @@ jobs:
     name: Release checks (publish dry-run)
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v4
-      - uses: dart-lang/setup-dart@v1
+      - uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4
+      - uses: dart-lang/setup-dart@65eb853c7ba17dde3be364c3d2858773e7144260 # v1.7.2
         with:
           sdk: stable
       - run: dart pub get

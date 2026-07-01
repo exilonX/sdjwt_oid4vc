@@ -20,4 +20,5 @@ jobs:
   publish:
     permissions:
       id-token: write # REQUIRED for pub.dev OIDC — do not remove.
-    uses: dart-lang/setup-dart/.github/workflows/publish.yml@v1
+    # Pinned to a commit SHA (Dependabot keeps it current).
+    uses: dart-lang/setup-dart/.github/workflows/publish.yml@65eb853c7ba17dde3be364c3d2858773e7144260 # v1.7.2

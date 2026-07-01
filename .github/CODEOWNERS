@@ -1,0 +1,6 @@
+# Require maintainer review on the security-critical surfaces.
+# The crypto/verify core and the CI/publish workflows are the highest-risk areas.
+
+/lib/src/core/        @exilonX
+/lib/src/sdjwt/       @exilonX
+/.github/             @exilonX
