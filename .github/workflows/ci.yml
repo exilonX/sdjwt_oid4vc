@@ -55,9 +55,9 @@ jobs:
         if: matrix.sdk == 'stable'
         uses: codecov/codecov-action@fb8b3582c8e4def4969c97caa2f19720cb33a72f # v7.0.0
         with:
+          token: ${{ secrets.CODECOV_TOKEN }} # Codecov now rejects tokenless uploads ("Token required")
           files: coverage/lcov.info
           fail_ci_if_error: false # never block CI on a coverage-upload hiccup
-        # Public repos upload tokenless; for a private repo add a CODECOV_TOKEN secret.
       - name: Smoke-test the example
         run: dart run example/sdjwt_oid4vc_example.dart
 
