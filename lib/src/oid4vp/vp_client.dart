@@ -1,9 +1,11 @@
 import 'dart:convert';
 
+import '../core/b64u.dart';
 import '../core/clock.dart';
 import '../core/errors.dart';
 import '../core/es256_signer.dart';
 import '../core/http.dart';
+import '../core/jwe.dart';
 import '../core/jws.dart';
 import '../core/net.dart';
 import '../sdjwt/sd_jwt.dart';
@@ -197,7 +199,120 @@ class Oid4vpClient {
     }
   }
 
+  /// Builds the `vp_token` in the OpenID4VP 1.0-final DCQL shape: a map from
+  /// each matched query id to a **one-element array** holding that credential's
+  /// presentation (SD-JWT `…~<kb-jwt>`). This is the shape both `direct_post`
+  /// and `direct_post.jwt` carry in 1.0-final; hand it to [submitResponse].
+  Future<Map<String, List<String>>> buildVpTokenMap({
+    required List<CredentialMatch> matches,
+    required PresentationRequest req,
+    required Es256Signer signer,
+  }) async {
+    final token = <String, List<String>>{};
+    for (final match in matches) {
+      token[match.queryId] = [
+        await match.credential.present(
+          disclose: match.requestedClaims,
+          disclosePaths: match.requestedPaths.toSet(),
+          audience: req.clientId,
+          nonce: req.nonce,
+          signer: signer,
+          now: _now,
+        ),
+      ];
+    }
+    return token;
+  }
+
+  /// One-call presentation of a single [match]: build its KB-JWT-bound
+  /// presentation, assemble the 1.0-final `vp_token`, and submit it in whatever
+  /// `response_mode` the request asked for (encrypting for `direct_post.jwt`).
+  /// Returns the verifier's `redirect_uri`, if any.
+  Future<String?> present({
+    required PresentationRequest req,
+    required CredentialMatch match,
+    required Es256Signer signer,
+  }) async {
+    final token = await buildVpTokenMap(
+      matches: [match],
+      req: req,
+      signer: signer,
+    );
+    return submitResponse(req: req, vpToken: token);
+  }
+
+  /// Submits a 1.0-final [vpToken] to the verifier's `response_uri`, honouring
+  /// `response_mode`:
+  ///
+  /// - `direct_post.jwt` → encrypts `{state, vp_token}` to the verifier's
+  ///   ephemeral key (ECDH-ES + AES-GCM) and POSTs a single `response=<JWE>`
+  ///   field (requires [PresentationRequest.responseEncryption]);
+  /// - anything else (`direct_post`) → POSTs `vp_token` (+ `state`) as form
+  ///   fields.
+  ///
+  /// Returns the verifier's `redirect_uri` if present. Throws
+  /// [PresentationError] (with the response body on a non-2xx) otherwise.
+  Future<String?> submitResponse({
+    required PresentationRequest req,
+    required Map<String, List<String>> vpToken,
+  }) async {
+    final uri = req.responseUri;
+    if (uri == null) {
+      throw const PresentationError('Request has no response_uri');
+    }
+
+    final Map<String, String> form;
+    if (req.responseMode == 'direct_post.jwt') {
+      final encryption = req.responseEncryption;
+      if (encryption == null) {
+        throw const PresentationError(
+          'direct_post.jwt requested but the request carries no '
+          'encryption key (client_metadata.jwks)',
+        );
+      }
+      final plaintext = jsonEncode({
+        if (req.state != null) 'state': req.state,
+        'vp_token': vpToken,
+      });
+      final jwe = encryptCompactJweEcdhEs(
+        recipientJwk: encryption.recipientJwk,
+        enc: encryption.enc,
+        kid: encryption.kid,
+        plaintext: utf8.encode(plaintext),
+        apv: b64uEncode(utf8.encode(req.nonce)),
+      );
+      form = {'response': jwe};
+    } else {
+      form = {
+        'vp_token': jsonEncode(vpToken),
+        if (req.state != null) 'state': req.state!,
+      };
+    }
+
+    final resp = await _http.postForm(uri, form);
+    if (!resp.ok) {
+      throw PresentationError(
+        'Presentation submit failed (${resp.statusCode}): '
+        '${_capBody(resp.body)}',
+      );
+    }
+    if (resp.body.trim().isEmpty) return null;
+    try {
+      final redirect = resp.json()['redirect_uri'];
+      return redirect is String ? redirect : null;
+    } on Oid4vcError {
+      return null;
+    }
+  }
+
   // --- internals -----------------------------------------------------------
+
+  /// Trims and caps a response body so a failed submit reports the verifier's
+  /// `error`/`error_description` without dumping an unbounded payload.
+  String _capBody(String body) {
+    final trimmed = body.trim();
+    return trimmed.length <= 300 ? trimmed : '${trimmed.substring(0, 300)}…';
+  }
 
   Future<String> _fetchRequestObject(Uri uri, {required bool post}) async {
     final resp =
@@ -235,7 +350,49 @@ class Oid4vpClient {
       responseUri: responseUri is String ? Uri.tryParse(responseUri) : null,
       state: state is String ? state : null,
       signature: signature,
+      responseEncryption: _parseResponseEncryption(json),
     );
+  }
+
+  /// Reads the verifier's response-encryption parameters from `client_metadata`
+  /// (OpenID4VP 1.0-final), or `null` when the request carries no usable
+  /// `use:enc` P-256 key. Only `ECDH-ES` (direct) is supported.
+  ResponseEncryption? _parseResponseEncryption(Map<String, dynamic> json) {
+    final metadata = json['client_metadata'];
+    if (metadata is! Map) return null;
+    final jwks = metadata['jwks'];
+    final keys = jwks is Map ? jwks['keys'] : null;
+    if (keys is! List) return null;
+
+    for (final key in keys) {
+      if (key is! Map) continue;
+      if (key['use'] != 'enc' ||
+          key['kty'] != 'EC' ||
+          key['crv'] != 'P-256' ||
+          key['alg'] != 'ECDH-ES') {
+        continue;
+      }
+      final jwk = key.cast<String, dynamic>();
+      return ResponseEncryption(
+        recipientJwk: jwk,
+        alg: 'ECDH-ES',
+        enc: _selectEnc(metadata['encrypted_response_enc_values_supported']),
+        kid: jwk['kid'] is String ? jwk['kid'] as String : null,
+      );
+    }
+    return null;
+  }
+
+  /// Chooses the AES-GCM content-encryption algorithm from the verifier's
+  /// `encrypted_response_enc_values_supported`, preferring `A128GCM` (the spec
+  /// default) then `A256GCM`; defaults to `A128GCM` when the list is absent.
+  String _selectEnc(Object? supported) {
+    if (supported is List) {
+      if (supported.contains('A256GCM') && !supported.contains('A128GCM')) {
+        return 'A256GCM';
+      }
+    }
+    return 'A128GCM';
   }
 
   Map<String, dynamic> _coerceDcql(Object? value) {

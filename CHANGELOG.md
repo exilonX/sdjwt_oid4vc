@@ -1,5 +1,26 @@
 # Changelog
 
+## 0.1.1
+
+OpenID4VP **`direct_post.jwt`** — encrypted authorization responses. Closes the
+presentation leg against OpenID4VP 1.0-Final verifiers (e.g. the EUDI reference),
+which require the `vp_token` to be POSTed as an encrypted JWE, not a plaintext
+form field. All additive; the plain `direct_post` path is unchanged.
+
+- **`Oid4vpClient.present(req, match, signer)`** — one call that builds the
+  KB-JWT-bound presentation, assembles the 1.0-final `vp_token`, and submits it
+  in whatever `response_mode` the request asked for (encrypting for
+  `direct_post.jwt`).
+- **`Oid4vpClient.submitResponse(req, vpToken)`** — response-mode-aware submit;
+  **`buildVpTokenMap(...)`** builds the 1.0-final `{queryId: [presentation]}`
+  shape. Failed submits now include the verifier's response body.
+- **`PresentationRequest.responseEncryption`** (`ResponseEncryption`) — the
+  verifier's ephemeral `use:enc` key + chosen `enc`, parsed from
+  `client_metadata` (1.0-final; `ECDH-ES` direct, `A128GCM`/`A256GCM`).
+- New internal `core/jwe.dart`: an ECDH-ES (direct) + Concat-KDF + AES-GCM
+  compact-JWE encrypter (pointycastle; the only place the library generates a
+  key). Verified against the RFC 7518 Appendix C Concat-KDF vector.
+
 ## 0.1.0-dev.2
 
 No library changes since `dev.1`. This release validates the automated,
