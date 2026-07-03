@@ -1,6 +1,6 @@
 # Changelog
 
-## 0.1.0-dev.3
+## 0.1.1
 
 OpenID4VP **`direct_post.jwt`** — encrypted authorization responses. Closes the
 presentation leg against OpenID4VP 1.0-Final verifiers (e.g. the EUDI reference),

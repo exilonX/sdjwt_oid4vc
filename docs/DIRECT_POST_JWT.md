@@ -1,6 +1,6 @@
 # Design: OpenID4VP `direct_post.jwt` (encrypted authorization response)
 
-- **Status:** Implemented (0.1.0-dev.3) — `core/jwe.dart`, `Oid4vpClient.present`/`submitResponse`/`buildVpTokenMap`, `PresentationRequest.responseEncryption`. Decisions taken from §11: high-level `present()` **and** low-level `submitResponse()`; `enc` default `A128GCM`; multi-credential deferred (the map helper is ready); KAT pinned to the RFC 7518 Appendix C Concat-KDF vector.
+- **Status:** Implemented (0.1.1) — `core/jwe.dart`, `Oid4vpClient.present`/`submitResponse`/`buildVpTokenMap`, `PresentationRequest.responseEncryption`. Decisions taken from §11: high-level `present()` **and** low-level `submitResponse()`; `enc` default `A128GCM`; multi-credential deferred (the map helper is ready); KAT pinned to the RFC 7518 Appendix C Concat-KDF vector.
 - **Date:** 2026-07-02
 - **Scope:** `sdjwt_oid4vc` (holder / `Oid4vpClient`)
 - **Motivates:** closing the OpenID4VP presentation leg against the live EUDI reference verifier; freezing the VP-response wire format for `0.1.0`.

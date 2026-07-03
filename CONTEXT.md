@@ -17,11 +17,14 @@ storage (encrypted Hive) and supplies the holder key (hardware via
 ## 2. Status (as of 2026-06-30)
 
 Implementation **complete and green**: all four layers, an example, and
-**200 tests at 100% line coverage** (`dart test`, `dart analyze` clean under a
+**232 tests at 100% line coverage** (`dart test`, `dart analyze` clean under a
 strict lint set, `dart pub publish --dry-run` clean bar the dirty-tree
-advisory). Version `0.1.0-dev.2` (pre-release while the API settles). See §9 for
+advisory). Version `0.1.1` (0.x — the API may still change on a minor bump).
+Published on pub.dev (`0.1.0-dev.1`/`dev.2` preceded it). See §9 for
 repo/CI/release.
 
+`0.1.1` adds OpenID4VP **`direct_post.jwt`** (encrypted authorization response:
+`ResponseEncryption`, `present`/`submitResponse`, `core/jwe.dart`).
 `0.1.0-dev.1` added the security hardening + the features a general-purpose
 wallet needs (CHANGELOG has the list): `alg`/`typ` assertion on verify, HTTPS
 enforcement, depth/duplicate-digest guards in `resolveClaims`, `nbf`/validity

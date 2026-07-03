@@ -4,15 +4,13 @@ How to cut a release of `sdjwt_oid4vc`. The first publish is manual (it creates
 the package and registers you as uploader); every release after that is
 automated over GitHub OIDC by pushing a version tag.
 
-## Version to publish first
+## Versioning
 
-The package is at **`0.1.0-dev.1`** (see `pubspec.yaml` / `CHANGELOG.md`) — the
-first pre-release. Publishing a `-dev.N` pre-release means `pub get` only
-resolves it when a consumer explicitly opts in (`sdjwt_oid4vc: ^0.1.0-dev.1`),
-which is exactly what you want while the API settles before `0.1.0`.
-
-> The only hard rule is that each *subsequent* publish must have a strictly
-> higher version than the last (`0.1.0-dev.2`, … then `0.1.0`).
+The package is **already published** (`0.1.0-dev.1`, `0.1.0-dev.2`, then real
+`0.1.x` releases). Just bump `pubspec.yaml` `version:` + add a `CHANGELOG.md`
+heading, land it on `main`, and tag (§4). The only hard rule is that each publish
+must be a strictly higher version than the last. Pre-1.0 (`0.x`), the API may
+still change on a minor bump, so `^0.1.0` pins consumers to `>=0.1.0 <0.2.0`.
 
 ## 1. Pre-flight (local, must all be clean)
 
@@ -69,12 +67,12 @@ tag matches `pubspec.yaml`'s `version:` and publishes tokenlessly.
 
 ```sh
 # 1. bump the version + changelog
-#    pubspec.yaml:  version: 0.1.0-dev.3   (or 0.1.0, 0.1.1, …)
+#    pubspec.yaml:  version: 0.1.1        (or 0.2.0, 1.0.0, …)
 #    CHANGELOG.md:  new heading + notes
 # 2. land it on main via PR, then from main:
 git switch main && git pull
-git tag v0.1.0-dev.3
-git push origin v0.1.0-dev.3
+git tag v0.1.1
+git push origin v0.1.1
 ```
 
 Pushing the tag triggers `publish.yml`. Watch it: `gh run watch`. If you enabled
