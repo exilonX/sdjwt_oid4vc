@@ -324,7 +324,7 @@ pointycastle mapping: `ECKeyGenerator` + `ECKeyGeneratorParameters(p256)` (seed 
 
 ---
 
-## 10. Secondary gap (nested-claim DCQL) — **resolved in 0.1.1**
+## 10. Secondary gap (nested-claim DCQL) — **resolved in 0.1.2**
 
 Previously `match`/`_satisfies` compared only **top-level** claim names, so a request for a nested/array
 path (`["place_of_birth","locality"]`, `["age_equal_or_over","18"]`, `["nationalities",0]`) either matched

@@ -1,5 +1,14 @@
 # Changelog
 
+## 0.1.2
+
+- **Nested-claim DCQL matching** — `match`/`satisfiesRequest` now check requested
+  claim *paths* (nested `["place_of_birth","locality"]`, array `["nationalities",
+  0]`, and the `[…, null]` all-elements wildcard) against the reconstructed claim
+  tree, not just top-level names. Presenting those paths already worked
+  (`present(disclosePaths:)`); matching no longer falsely accepts a request for a
+  nested claim the credential lacks.
+
 ## 0.1.1
 
 OpenID4VP **`direct_post.jwt`** — encrypted authorization responses. Closes the
@@ -20,12 +29,6 @@ form field. All additive; the plain `direct_post` path is unchanged.
 - New internal `core/jwe.dart`: an ECDH-ES (direct) + Concat-KDF + AES-GCM
   compact-JWE encrypter (pointycastle; the only place the library generates a
   key). Verified against the RFC 7518 Appendix C Concat-KDF vector.
-- **Nested-claim DCQL matching** — `match`/`satisfiesRequest` now check requested
-  claim *paths* (nested `["place_of_birth","locality"]`, array `["nationalities",
-  0]`, and the `[…, null]` all-elements wildcard) against the reconstructed claim
-  tree, not just top-level names. Presenting those paths already worked
-  (`present(disclosePaths:)`); matching no longer falsely accepts a request for a
-  nested claim the credential lacks.
 
 ## 0.1.0-dev.2
 
