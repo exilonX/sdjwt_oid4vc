@@ -7,6 +7,7 @@ import 'package:test/test.dart';
 
 import '../support/der_cert.dart';
 import '../support/fake_http.dart';
+import '../support/jwe_recipient.dart';
 import '../support/util.dart';
 
 const _vct = 'https://issuer.example/extras/v1';
@@ -500,6 +501,252 @@ void main() {
 
       final mdl = SdJwt.parse(object['mdl'] as String);
       expect(mdl.disclosures.single.name, 'family_name');
+    });
+  });
+
+  group('direct_post.jwt (encrypted response)', () {
+    final now = fixedClock(1700);
+    final rcpt = recipient(9, kid: 'enc-key-1');
+
+    Map<String, dynamic> clientMetadata({
+      Map<String, dynamic>? encJwk,
+      List<Object?> keys = const [],
+      List<String>? encSupported = const ['A128GCM', 'A256GCM'],
+      bool omitJwks = false,
+    }) =>
+        {
+          if (!omitJwks)
+            'jwks': {
+              'keys': keys.isNotEmpty ? keys : [encJwk ?? rcpt.jwk],
+            },
+          if (encSupported != null)
+            'encrypted_response_enc_values_supported': encSupported,
+        };
+
+    Map<String, dynamic> encPayload({
+      Map<String, dynamic>? metadata,
+      String responseMode = 'direct_post.jwt',
+      String responseUri = '$_clientId/response',
+    }) =>
+        {
+          'client_id': _clientId,
+          'nonce': 'nonce-1',
+          'response_mode': responseMode,
+          'response_uri': responseUri,
+          'state': 'st-1',
+          'dcql_query': dcql(),
+          'client_metadata': metadata ?? clientMetadata(),
+        };
+
+    Oid4vpClient clientWith(FakeOid4vcHttp http) =>
+        Oid4vpClient(http, now: now);
+    final offlineClient = clientWith(FakeOid4vcHttp((_) => HttpResp(404, '')));
+
+    test('parseRequest reads the enc key and prefers A128GCM', () {
+      final re = offlineClient
+          .parseRequest(requestJwt(encPayload()))
+          .responseEncryption!;
+      expect(re.alg, 'ECDH-ES');
+      expect(re.enc, 'A128GCM'); // preferred over the also-offered A256GCM
+      expect(re.kid, 'enc-key-1');
+      expect(re.recipientJwk['x'], rcpt.jwk['x']);
+    });
+
+    test('selects A256GCM only when A128GCM is not offered', () {
+      final re = offlineClient
+          .parseRequest(
+            requestJwt(
+              encPayload(
+                metadata: clientMetadata(encSupported: const ['A256GCM']),
+              ),
+            ),
+          )
+          .responseEncryption!;
+      expect(re.enc, 'A256GCM');
+    });
+
+    test('defaults enc to A128GCM when the list is absent', () {
+      final re = offlineClient
+          .parseRequest(
+            requestJwt(
+              encPayload(metadata: clientMetadata(encSupported: null)),
+            ),
+          )
+          .responseEncryption!;
+      expect(re.enc, 'A128GCM');
+    });
+
+    test('responseEncryption is null without a usable enc key', () {
+      PresentationRequest parse(Map<String, dynamic> payload) =>
+          offlineClient.parseRequest(requestJwt(payload));
+
+      // No client_metadata at all.
+      expect(parse(requestPayload()).responseEncryption, isNull);
+      // client_metadata present but no jwks.
+      expect(
+        parse(encPayload(metadata: clientMetadata(omitJwks: true)))
+            .responseEncryption,
+        isNull,
+      );
+      // A non-map entry, then exhausted.
+      expect(
+        parse(encPayload(metadata: clientMetadata(keys: const ['nope'])))
+            .responseEncryption,
+        isNull,
+      );
+      // Right kind of key, wrong alg (e.g. key-wrap) — we only do ECDH-ES.
+      final wrongAlg = {...rcpt.jwk, 'alg': 'ECDH-ES+A128KW'};
+      expect(
+        parse(encPayload(metadata: clientMetadata(encJwk: wrongAlg)))
+            .responseEncryption,
+        isNull,
+      );
+    });
+
+    test('present() encrypts to the verifier and round-trips', () async {
+      final http = FakeOid4vcHttp(
+        (_) => jsonResponse({'redirect_uri': '$_clientId/done'}),
+      );
+      final client = clientWith(http);
+      final req = client.parseRequest(requestJwt(encPayload()));
+      final match = client.match(req, [await heldCredential()])!;
+
+      final redirect =
+          await client.present(req: req, match: match, signer: signer);
+      expect(redirect, '$_clientId/done');
+
+      // Exactly one form field: response=<compact JWE>.
+      expect(http.last.form.keys, ['response']);
+      final plaintext = utf8.decode(
+        decryptJwe(http.last.form['response']!, rcpt.private),
+      );
+      final decoded = jsonDecode(plaintext) as Map<String, dynamic>;
+      expect(decoded['state'], 'st-1');
+      final vpToken = decoded['vp_token'] as Map<String, dynamic>;
+      final presentations =
+          vpToken['c1'] as List; // 1.0-final: object of arrays
+      expect(presentations, hasLength(1));
+      final presented = SdJwt.parse(presentations.single as String);
+      expect(presented.disclosures.single.name, 'given_name');
+      expect(Jws.decompose(presented.kbJwt!).payload['nonce'], 'nonce-1');
+    });
+
+    test('throws when direct_post.jwt has no encryption key', () async {
+      final req = offlineClient.parseRequest(
+        requestJwt(encPayload(metadata: clientMetadata(omitJwks: true))),
+      );
+      expect(req.responseEncryption, isNull);
+      expect(
+        () => offlineClient.submitResponse(
+          req: req,
+          vpToken: const {
+            'c1': ['x'],
+          },
+        ),
+        throwsA(isA<PresentationError>()),
+      );
+    });
+
+    test('plain direct_post submitResponse posts the object vp_token',
+        () async {
+      final http = FakeOid4vcHttp((_) => HttpResp(200, ''));
+      final client = clientWith(http);
+      final req = client.parseRequest(
+        requestJwt(encPayload(responseMode: 'direct_post')),
+      );
+      final result = await client.submitResponse(
+        req: req,
+        vpToken: const {
+          'c1': ['P'],
+        },
+      );
+      expect(result, isNull);
+      expect(jsonDecode(http.last.form['vp_token']!), {
+        'c1': ['P'],
+      });
+      expect(http.last.form['state'], 'st-1');
+    });
+
+    test('submitResponse returns null on a non-JSON 200 body', () async {
+      final http = FakeOid4vcHttp((_) => HttpResp(200, 'OK'));
+      final client = clientWith(http);
+      final req = client.parseRequest(
+        requestJwt(encPayload(responseMode: 'direct_post')),
+      );
+      expect(
+        await client.submitResponse(
+          req: req,
+          vpToken: const {
+            'c1': ['P'],
+          },
+        ),
+        isNull,
+      );
+    });
+
+    test('surfaces a short verifier error body', () async {
+      final http = FakeOid4vcHttp(
+        (_) => HttpResp(400, '{"error":"UnexpectedResponseMode"}'),
+      );
+      final client = clientWith(http);
+      final req = client.parseRequest(requestJwt(encPayload()));
+      final match = client.match(req, [await heldCredential()])!;
+      await expectLater(
+        () => client.present(req: req, match: match, signer: signer),
+        throwsA(
+          predicate<Object>(
+            (e) =>
+                e is PresentationError &&
+                e.toString().contains('UnexpectedResponseMode'),
+          ),
+        ),
+      );
+    });
+
+    test('caps an oversized error body', () async {
+      final http = FakeOid4vcHttp((_) => HttpResp(400, 'x' * 500));
+      final client = clientWith(http);
+      final req = client.parseRequest(requestJwt(encPayload()));
+      final match = client.match(req, [await heldCredential()])!;
+      await expectLater(
+        () => client.present(req: req, match: match, signer: signer),
+        throwsA(
+          predicate<Object>(
+            (e) => e is PresentationError && e.toString().contains('…'),
+          ),
+        ),
+      );
+    });
+
+    test('submitResponse throws without a response_uri', () {
+      final req = offlineClient.parseRequest(
+        requestJwt(const {
+          'client_id': _clientId,
+          'nonce': 'n',
+          'response_mode': 'direct_post.jwt',
+          'dcql_query': {
+            'credentials': [
+              {
+                'id': 'c1',
+                'claims': [
+                  {
+                    'path': ['given_name'],
+                  },
+                ],
+              },
+            ],
+          },
+        }),
+      );
+      expect(
+        () => offlineClient.submitResponse(
+          req: req,
+          vpToken: const {
+            'c1': ['x'],
+          },
+        ),
+        throwsA(isA<PresentationError>()),
+      );
     });
   });
 

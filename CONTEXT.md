@@ -17,11 +17,14 @@ storage (encrypted Hive) and supplies the holder key (hardware via
 ## 2. Status (as of 2026-06-30)
 
 Implementation **complete and green**: all four layers, an example, and
-**200 tests at 100% line coverage** (`dart test`, `dart analyze` clean under a
+**232 tests at 100% line coverage** (`dart test`, `dart analyze` clean under a
 strict lint set, `dart pub publish --dry-run` clean bar the dirty-tree
-advisory). Version `0.1.0-dev.2` (pre-release while the API settles). See §9 for
+advisory). Version `0.1.1` (0.x — the API may still change on a minor bump).
+Published on pub.dev (`0.1.0-dev.1`/`dev.2` preceded it). See §9 for
 repo/CI/release.
 
+`0.1.1` adds OpenID4VP **`direct_post.jwt`** (encrypted authorization response:
+`ResponseEncryption`, `present`/`submitResponse`, `core/jwe.dart`).
 `0.1.0-dev.1` added the security hardening + the features a general-purpose
 wallet needs (CHANGELOG has the list): `alg`/`typ` assertion on verify, HTTPS
 enforcement, depth/duplicate-digest guards in `resolveClaims`, `nbf`/validity
@@ -52,6 +55,7 @@ lib/
       es256_signer.dart  Es256Signer, KeyAttestation  (THE injection point)
       http.dart          Oid4vcHttp, HttpResp, DefaultOid4vcHttp
       ec.dart            ES256 verify + JWK/x5c → P-256 key + X.509 chain validation  (pointycastle/asn1lib; NOT exported)
+      jwe.dart           ECDH-ES + Concat-KDF + AES-GCM compact-JWE encrypt for direct_post.jwt  (pointycastle; NOT exported)
       net.dart           isSecureUrl — https-or-loopback gate for fetched URLs
       jwk.dart           RFC 7638 thumbprint
       jws.dart           signing input + compact-JWS decode
@@ -71,7 +75,7 @@ lib/
     oid4vp/              presentation transport
       vp_client.dart     Oid4vpClient (match/matchAll/buildVpToken/buildVpTokenObject)
       dcql.dart          DcqlQuery / DcqlCredentialQuery / DcqlClaim / DcqlCredentialSet
-      models.dart        PresentationRequest (+ RequestObjectSignature), CredentialMatch
+      models.dart        PresentationRequest (+ RequestObjectSignature, ResponseEncryption), CredentialMatch
 ```
 
 `issuer_verifier.dart` is the single home for "resolve the issuer key per an
@@ -191,9 +195,15 @@ against your target issuer / verifier when integrating:
   verify, zlib-inflate `status_list.lst`, read `bits`-wide value at the index
   (LSB-first packing). Confirm against the live issuer's `bits`, the
   `Accept`/media type, and whether the token's `sub` must equal the list URI
-  (not enforced yet). `vp_token` for multi-credential DCQL is built as a JSON
-  object keyed by query id (`buildVpTokenObject`); a deployment that wraps each
-  value in an array would need a tweak there.
+  (not enforced yet).
+- **Response modes.** `direct_post` and **`direct_post.jwt`** (encrypted) are
+  both supported; `present()`/`submitResponse()` pick by `response_mode` and emit
+  the OpenID4VP 1.0-final `vp_token` object-of-arrays (`{queryId: [presentation]}`
+  via `buildVpTokenMap`). `direct_post.jwt` encrypts `{state, vp_token}` to the
+  verifier's ephemeral `client_metadata` key with ECDH-ES (direct) + AES-GCM
+  (`core/jwe.dart`); only that alg family is handled (no key-wrap / RSA / mdoc
+  `apu`). The older `buildVpToken`/`buildVpTokenObject` (bare-string values) stay
+  for legacy/plain callers.
 
 ## 7. Next steps
 

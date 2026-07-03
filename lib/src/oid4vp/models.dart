@@ -37,6 +37,7 @@ class PresentationRequest {
     this.responseUri,
     this.state,
     this.signature,
+    this.responseEncryption,
   });
 
   /// `client_id` — also the audience the KB-JWT must commit to.
@@ -61,6 +62,11 @@ class PresentationRequest {
   /// else `null` (unsigned inline parameters). The wallet uses this to
   /// authenticate the verifier before presenting.
   final RequestObjectSignature? signature;
+
+  /// The verifier's response-encryption parameters (its ephemeral `use:enc`
+  /// key + chosen `enc`) when `response_mode` is `direct_post.jwt`, else `null`.
+  /// Present ⇒ the `vp_token` response must be an encrypted JWE.
+  final ResponseEncryption? responseEncryption;
 
   /// The `client_id` scheme prefix (e.g. `x509_san_dns`, `did`, `redirect_uri`)
   /// when `client_id` is of the `<scheme>:<value>` form, else `null`.
@@ -150,6 +156,37 @@ class RequestObjectSignature {
       );
     }
   }
+}
+
+/// The verifier's response-encryption parameters for `direct_post.jwt`, read
+/// from the request's `client_metadata`.
+///
+/// OpenID4VP 1.0 Final: the verifier publishes a **fresh per-transaction** EC
+/// `use:enc` key in `client_metadata.jwks`, and the wallet POSTs the `vp_token`
+/// as a JWE encrypted to it. `alg` comes from the key's own `alg` (`ECDH-ES`);
+/// `enc` is chosen from `encrypted_response_enc_values_supported`. The old JARM
+/// `authorization_encrypted_response_alg`/`_enc` fields are absent in 1.0-final.
+class ResponseEncryption {
+  const ResponseEncryption({
+    required this.recipientJwk,
+    required this.alg,
+    required this.enc,
+    this.kid,
+  });
+
+  /// The verifier's ephemeral EC `use:enc` JWK (`kty:EC`, `crv:P-256`, `x`, `y`,
+  /// `kid`, `alg`) — never cache it; it is per-transaction.
+  final Map<String, dynamic> recipientJwk;
+
+  /// The key-agreement algorithm — `ECDH-ES` (direct). From the JWK's `alg`.
+  final String alg;
+
+  /// The content-encryption algorithm — `A128GCM` or `A256GCM`.
+  final String enc;
+
+  /// The recipient key's `kid`, echoed into the JWE header so the verifier can
+  /// select the matching per-transaction key. `null` when the JWK omits it.
+  final String? kid;
 }
 
 /// A held credential that satisfies a request, plus the claims to reveal.
