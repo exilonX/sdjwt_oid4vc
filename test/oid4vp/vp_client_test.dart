@@ -1,6 +1,7 @@
 import 'dart:convert';
 import 'dart:math';
 
+import 'package:crypto/crypto.dart';
 import 'package:sdjwt_oid4vc/sdjwt_oid4vc.dart';
 import 'package:sdjwt_oid4vc/testing.dart';
 import 'package:test/test.dart';
@@ -747,6 +748,161 @@ void main() {
         ),
         throwsA(isA<PresentationError>()),
       );
+    });
+  });
+
+  group('nested-claim DCQL (paths beyond top level)', () {
+    final client = Oid4vpClient(
+      FakeOid4vcHttp((_) => HttpResp(404, '')),
+      now: fixedClock(1700),
+    );
+
+    // A PID-shaped credential: top-level given_name, a nested place_of_birth
+    // object, a nested age_equal_or_over object, and a nationalities array —
+    // each member selectively disclosable.
+    final givenName =
+        Disclosure.forClaim(salt: 'a', name: 'given_name', value: 'Erika');
+    final locality =
+        Disclosure.forClaim(salt: 'b', name: 'locality', value: 'Cologne');
+    final country =
+        Disclosure.forClaim(salt: 'c', name: 'country', value: 'DE');
+    final over18 = Disclosure.forClaim(salt: 'd', name: '18', value: true);
+    final nationality =
+        Disclosure.parse(b64uEncodeString(jsonEncode(['e', 'DE'])));
+
+    final pid = SdJwt.parse(
+      customSdJwt(
+        {
+          'iss': 'https://pid-issuer.example',
+          'vct': 'urn:eudi:pid:1',
+          '_sd_alg': 'sha-256',
+          '_sd': [givenName.digest(sha256)],
+          'place_of_birth': {
+            '_sd': [locality.digest(sha256), country.digest(sha256)],
+          },
+          'age_equal_or_over': {
+            '_sd': [over18.digest(sha256)],
+          },
+          'nationalities': [
+            {'...': nationality.digest(sha256)},
+          ],
+        },
+        disclosures: [
+          givenName.encoded,
+          locality.encoded,
+          country.encoded,
+          over18.encoded,
+          nationality.encoded,
+        ],
+      ),
+    );
+
+    Map<String, dynamic> pidQuery(List<List<Object?>> paths) => {
+          'credentials': [
+            {
+              'id': 'pid',
+              'format': 'dc+sd-jwt',
+              'meta': {
+                'vct_values': ['urn:eudi:pid:1'],
+              },
+              'claims': [
+                for (final path in paths) {'path': path},
+              ],
+            },
+          ],
+        };
+
+    PresentationRequest reqFor(List<List<Object?>> paths) =>
+        client.parseRequest(
+          requestJwt(requestPayload(query: pidQuery(paths))),
+        );
+
+    test('matches a request for nested-object + array claims', () {
+      final req = reqFor([
+        ['age_equal_or_over', '18'],
+        ['place_of_birth', 'locality'],
+        ['nationalities', 0],
+      ]);
+      final match = client.match(req, [pid]);
+      expect(match, isNotNull);
+      expect(match!.queryId, 'pid');
+      expect(match.requestedPaths, [
+        ['age_equal_or_over', '18'],
+        ['place_of_birth', 'locality'],
+        ['nationalities', 0],
+      ]);
+    });
+
+    test('matches an all-elements array wildcard', () {
+      expect(
+        client.match(
+          reqFor([
+            ['nationalities', null],
+          ]),
+          [pid],
+        ),
+        isNotNull,
+      );
+    });
+
+    test('does not match when a nested claim is absent', () {
+      // place_of_birth has no postal_code member.
+      expect(
+        client.match(
+          reqFor([
+            ['place_of_birth', 'postal_code'],
+          ]),
+          [pid],
+        ),
+        isNull,
+      );
+    });
+
+    test('does not match a bad index or a path into a scalar', () {
+      List<List<Object?>> p(List<Object?> path) => [path];
+      // out-of-range array index
+      expect(client.match(reqFor(p(['nationalities', 5])), [pid]), isNull);
+      // string segment into a scalar value
+      expect(client.match(reqFor(p(['given_name', 'x'])), [pid]), isNull);
+      // int segment into a non-list
+      expect(client.match(reqFor(p(['given_name', 0])), [pid]), isNull);
+      // wildcard whose elements lack the remaining path
+      final wildcardMiss =
+          client.match(reqFor(p(['nationalities', null, 'x'])), [pid]);
+      expect(wildcardMiss, isNull);
+    });
+
+    test('present reveals exactly the requested nested claims, hides the rest',
+        () async {
+      final http = FakeOid4vcHttp((_) => HttpResp(200, ''));
+      final presenter = Oid4vpClient(http, now: fixedClock(1700));
+      final req = presenter.parseRequest(
+        requestJwt(
+          requestPayload(
+            query: pidQuery([
+              ['age_equal_or_over', '18'],
+              ['place_of_birth', 'locality'],
+            ]),
+          ),
+        ),
+      );
+      final match = presenter.match(req, [pid])!;
+      await presenter.present(req: req, match: match, signer: signer);
+
+      final vpToken =
+          jsonDecode(http.last.form['vp_token']!) as Map<String, dynamic>;
+      final presented = SdJwt.parse((vpToken['pid'] as List).single as String);
+
+      // Only the two requested nested disclosures ride along.
+      final names = presented.disclosures.map((d) => d.name).toSet();
+      expect(names, {'18', 'locality'});
+      final resolved = presented.resolveClaims();
+      final placeOfBirth = resolved['place_of_birth'] as Map;
+      expect((resolved['age_equal_or_over'] as Map)['18'], true);
+      expect(placeOfBirth['locality'], 'Cologne');
+      // Siblings + unrelated top-level claims stay hidden.
+      expect(placeOfBirth.containsKey('country'), isFalse);
+      expect(resolved.containsKey('given_name'), isFalse);
     });
   });
 

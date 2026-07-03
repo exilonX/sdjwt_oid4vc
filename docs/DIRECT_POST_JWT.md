@@ -324,13 +324,14 @@ pointycastle mapping: `ECKeyGenerator` + `ECKeyGeneratorParameters(p256)` (seed 
 
 ---
 
-## 10. Secondary gap (separate work item): nested-claim DCQL
+## 10. Secondary gap (nested-claim DCQL) — **resolved in 0.1.1**
 
-`match`/`buildVpToken` handle only **top-level** claim names; `_satisfies` and `requestedClaims` ignore
-nested/array DCQL paths (`["place_of_birth","locality"]`, `["age_equal_or_over","18"]`). EUDI PID often
-requests such nested claims. `CredentialMatch.requestedPaths` and `SdJwtVc.present(disclosePaths:)`
-already exist — wiring them through `match`/present would close this. Not required for the top-level
-`family_name`/`given_name` case that this doc's live test uses; tracked as its own change.
+Previously `match`/`_satisfies` compared only **top-level** claim names, so a request for a nested/array
+path (`["place_of_birth","locality"]`, `["age_equal_or_over","18"]`, `["nationalities",0]`) either matched
+vacuously or was ignored. `_satisfies` now resolves each DCQL claim **path** against the reconstructed
+claim tree (string → object member, int → array index, `null` → all elements), so matching honours nested
+requests. Disclosure already worked via `present(disclosePaths:)` / `CredentialMatch.requestedPaths`; the
+one-call `present(req, match, signer)` now selects nested claims end-to-end.
 
 ---
 

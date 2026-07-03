@@ -11,21 +11,6 @@ import '../support/der_cert.dart';
 import '../support/fake_http.dart';
 import '../support/util.dart';
 
-/// Builds a compact SD-JWT with a fake signature — fine for `parse`/`resolve`
-/// tests, which never verify the issuer signature.
-String customSdJwt(
-  Map<String, dynamic> payload, {
-  List<String> disclosures = const [],
-  Map<String, dynamic> header = const {'alg': 'ES256', 'typ': 'dc+sd-jwt'},
-}) {
-  final signingInput = Jws.signingInput(header, payload);
-  final buffer = StringBuffer('$signingInput.${b64uEncode([9, 9, 9])}~');
-  for (final disclosure in disclosures) {
-    buffer.write('$disclosure~');
-  }
-  return buffer.toString();
-}
-
 void main() {
   final signer = SoftwareEs256Signer.generate(random: Random(11));
   final jwk = signer.publicJwkSync();

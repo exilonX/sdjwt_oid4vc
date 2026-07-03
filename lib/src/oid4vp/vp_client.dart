@@ -406,8 +406,34 @@ class Oid4vpClient {
       final vct = credential.vct;
       if (vct == null || !query.vctValues.contains(vct)) return false;
     }
-    final available = credential.resolveClaims().keys.toSet();
-    return query.claimNames.every(available.contains);
+    // Check every requested claim *path* against the reconstructed claim tree,
+    // so nested (`["place_of_birth","locality"]`) and array (`["nationalities",
+    // 0]`) requests are honoured — not just top-level names.
+    final resolved = credential.resolveClaims();
+    return query.claims.every((claim) => _claimPresent(resolved, claim.path));
+  }
+
+  /// Whether the DCQL [path] resolves to a present value in [node]: a string
+  /// segment selects an object member, an int an array index, and `null` is the
+  /// "all array elements" wildcard (every element must have the remaining path).
+  static bool _claimPresent(Object? node, List<Object?> path) {
+    if (path.isEmpty) return true;
+    final rest = path.sublist(1);
+    final segment = path.first;
+    if (segment is String) {
+      return node is Map<String, dynamic> &&
+          node.containsKey(segment) &&
+          _claimPresent(node[segment], rest);
+    }
+    if (segment is int) {
+      return node is List &&
+          segment >= 0 &&
+          segment < node.length &&
+          _claimPresent(node[segment], rest);
+    }
+    return node is List &&
+        node.isNotEmpty &&
+        node.every((element) => _claimPresent(element, rest));
   }
 
   bool _looksLikeJwt(String value) =>
