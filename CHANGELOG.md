@@ -1,5 +1,10 @@
 # Changelog
 
+## 0.1.3
+
+- Metadata only, no code changes. `homepage` now points at the design write-up
+  (https://exilonx.github.io/case-study/sdjwt-oid4vc); `repository` is unchanged.
+
 ## 0.1.2
 
 - **Nested-claim DCQL matching** — `match`/`satisfiesRequest` now check requested

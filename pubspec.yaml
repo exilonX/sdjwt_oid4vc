@@ -2,8 +2,8 @@ name: sdjwt_oid4vc
 description: >-
   SD-JWT VC + OpenID4VCI/OpenID4VP protocol library for Dart wallets (holder
   role). Key- and HTTP-agnostic, pure logic, fully testable without hardware.
-version: 0.1.2
-homepage: https://github.com/exilonX/sdjwt_oid4vc
+version: 0.1.3
+homepage: https://exilonx.github.io/case-study/sdjwt-oid4vc
 repository: https://github.com/exilonX/sdjwt_oid4vc
 issue_tracker: https://github.com/exilonX/sdjwt_oid4vc/issues
 topics:

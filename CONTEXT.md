@@ -14,15 +14,20 @@ A Dart library implementing the **holder/wallet** side of SD-JWT VC issuance
 storage (encrypted Hive) and supplies the holder key (hardware via
 `attested_secure_keys`). No Flutter dependency — pure Dart, publishable.
 
-## 2. Status (as of 2026-06-30)
+## 2. Status (as of 2026-07-03)
 
-Implementation **complete and green**: all four layers, an example, and
-**232 tests at 100% line coverage** (`dart test`, `dart analyze` clean under a
+Implementation **complete and green**: all four layers, an example, and a full
+suite at **100% line coverage** (`dart test`, `dart analyze` clean under a
 strict lint set, `dart pub publish --dry-run` clean bar the dirty-tree
-advisory). Version `0.1.1` (0.x — the API may still change on a minor bump).
-Published on pub.dev (`0.1.0-dev.1`/`dev.2` preceded it). See §9 for
+advisory). Version `0.1.2` (0.x — the API may still change on a minor bump).
+Published on pub.dev (`0.1.0-dev.1`/`dev.2`, `0.1.1` preceded it). See §9 for
 repo/CI/release.
 
+`0.1.2` fixes **nested-claim DCQL matching** — `match`/`satisfiesRequest` now
+check requested claim *paths* (nested `["place_of_birth","locality"]`, array
+`["nationalities",0]`, `[…,null]` wildcard) against the reconstructed claim tree,
+not just top-level names (presenting them already worked via
+`present(disclosePaths:)`).
 `0.1.1` adds OpenID4VP **`direct_post.jwt`** (encrypted authorization response:
 `ResponseEncryption`, `present`/`submitResponse`, `core/jwe.dart`).
 `0.1.0-dev.1` added the security hardening + the features a general-purpose
@@ -35,11 +40,17 @@ authentication** (request-object signature exposed for the wallet to verify),
 What stays the app's: the **Trusted List data** itself (which anchors / the EU
 LOTL), and certificate **revocation** (CRL/OCSP) — see §4, §7.
 
-The full issue→present→verify loop has been proven end-to-end against a
-reference EUDI wallet and a real qualified issuer seal. This library is the
-native Dart re-implementation of the holder half; it has **not yet been wired
-into a production wallet** or run against a live issuer / verifier — that is the
-next milestone (§7).
+The full issue→present→verify loop is now proven end-to-end **against the live
+EUDI reference** (`issuer.eudiw.dev` + `verifier.eudiw.dev`), on a real Android
+device with a hardware-backed, biometric-gated holder key (`attested_secure_keys`):
+a real **PID** SD-JWT VC is issued (OpenID4VCI pre-auth + `tx_code` + hardware
+PoP), issuer-trusted via `x5cChain` to a bundled EUDI dev IACA, status valid;
+then presented over OpenID4VP **`direct_post.jwt`** (the encrypted response is
+accepted by the verifier), disclosing only the requested claims incl. **nested**
+(`place_of_birth/locality`, siblings hidden). The reference integration is the
+**`test_wallet`** app (sibling repo; its `EUDI_LIVE_TESTING.md` has the exact
+config + reproduction steps). Not yet wired into the production `roeid_flutter`
+wallet — that is the remaining milestone (§7).
 
 ## 3. Architecture
 
@@ -207,15 +218,23 @@ against your target issuer / verifier when integrating:
 
 ## 7. Next steps
 
-1. Wire into `roeid_flutter`: implement `AttestedKeysSigner` (see
-   `example/README.md`), one signer per credential (alias = credential id,
-   `auth-required`).
-2. Run the real loop against a live issuer/verifier: redeem an offer, present
-   the credential. Capture real test vectors (a real offer, a real DCQL request,
-   a real issuer `x5c`) and add them as fixtures.
-3. PID (`urn:eudi:pid:1`) once a PID issuer exists — same transport, possibly
-   new claim shapes; resolve-claims already handles nested objects + arrays, and
-   `present(disclosePaths:)` now selects nested/array claims by DCQL path.
+1. ✅ **Proven end-to-end against the live EUDI reference** via the `test_wallet`
+   app (issuance + `direct_post.jwt` presentation + nested disclosure on a real
+   hardware key). Remaining: wire the same `AttestedKeysSigner` pattern into the
+   production `roeid_flutter` wallet — one signer per credential (alias =
+   credential id, `auth-required`). The adapter is ~40 lines; see the reference
+   one in the `test_wallet` repo (`lib/attested_keys_signer.dart`).
+2. **Capture live fixtures / regression tests.** The live loop passed but the
+   library doesn't yet pin real vectors — add a real EUDI offer, DCQL request,
+   issuer `x5c`, and a `direct_post.jwt` request (with its ephemeral
+   `client_metadata` enc key) as fixtures so the wire format can't silently
+   drift. Live facts already learned worth encoding: the EUDI issuer serves **no**
+   `jwt-vc-issuer` metadata (so `x5cChain` with a bundled IACA is required, not
+   `issuerMetadata`), and the verifier uses `client_id` scheme `x509_hash` +
+   `response_mode: direct_post.jwt`.
+3. ✅ PID (`urn:eudi:pid:1`) issued **and** presented from the live EUDI PID
+   issuer — same transport; resolve-claims + `present(disclosePaths:)` handle its
+   nested/array claim shapes.
 4. **Trust anchors / LOTL wiring** — the chain *mechanism* is done
    (`IssuerTrust.x5cChain`); what's left is the *data*: the app fetches/parses
    the EU LOTL (or a configured anchor set) and feeds the DER anchors in. Same
