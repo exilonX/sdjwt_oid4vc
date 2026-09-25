@@ -503,6 +503,69 @@ void main() {
       expect(meta.tokenEndpoint, Uri.parse('$as/token'));
     });
 
+    test(
+        'rejects host-root AS metadata whose issuer is not the path-aware AS '
+        '(mix-up guard)', () async {
+      const as = 'https://as.example/tenant';
+      final http = FakeOid4vcHttp((req) {
+        switch (req.url.path) {
+          case '/.well-known/openid-credential-issuer':
+            return jsonResponse({
+              ..._issuerMeta,
+              'authorization_servers': [as],
+            });
+          case '/.well-known/oauth-authorization-server':
+            // Some other AS on the same host.
+            return jsonResponse({
+              'issuer': 'https://as.example/other',
+              'token_endpoint': 'https://as.example/other/token',
+            });
+          default:
+            return HttpResp(404, '');
+        }
+      });
+      final client = Oid4vciClient(http);
+      expect(
+        () async => client.fetchIssuerMetadata(
+          await client.parseOffer(_offerJson()),
+        ),
+        throwsA(
+          isA<CredentialError>().having(
+            (e) => e.message,
+            'message',
+            contains('is for https://as.example/other'),
+          ),
+        ),
+      );
+    });
+
+    test('prefers the RFC 8414 path-aware AS metadata when it is served',
+        () async {
+      const as = 'https://as.example/tenant';
+      final http = FakeOid4vcHttp((req) {
+        switch (req.url.path) {
+          case '/.well-known/openid-credential-issuer':
+            return jsonResponse({
+              ..._issuerMeta,
+              'authorization_servers': [as],
+            });
+          case '/.well-known/oauth-authorization-server/tenant':
+            return jsonResponse({'token_endpoint': '$as/token'});
+          default:
+            return HttpResp(404, '');
+        }
+      });
+      final client = Oid4vciClient(http);
+      final meta = await client.fetchIssuerMetadata(
+        await client.parseOffer(_offerJson()),
+      );
+      expect(meta.tokenEndpoint, Uri.parse('$as/token'));
+      expect(
+        http.requests.map((r) => r.url.path),
+        isNot(contains('/.well-known/oauth-authorization-server')),
+      );
+    });
+
     test('fetchIssuerMetadata throws when the metadata GET fails', () async {
       final client = Oid4vciClient(FakeOid4vcHttp((_) => HttpResp(404, '')));
       expect(

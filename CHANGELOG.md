@@ -1,5 +1,17 @@
 # Changelog
 
+## Unreleased
+
+- **Token-endpoint discovery works with the EUDI reference issuer.** When the
+  RFC 8414 path-aware authorization-server metadata
+  (`/.well-known/oauth-authorization-server/<path>`) is not served, discovery
+  now falls back to the host root. The fallback is accepted only if its `issuer`
+  is exactly the authorization server named by `authorization_servers`.
+  `backend.issuer.eudiw.dev` (AS `…/oidc`) needs this. Before, an offer naming
+  that issuer failed with a 404.
+- Regression fixtures captured from the live EUDI issuer and verifier
+  (`test/fixtures/eudi/`).
+
 ## 0.1.3
 
 - Metadata only, no code changes. `homepage` now points at the design write-up
