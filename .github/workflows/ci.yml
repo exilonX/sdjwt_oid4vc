@@ -61,6 +61,25 @@ jobs:
       - name: Smoke-test the example
         run: dart run example/sdjwt_oid4vc_example.dart
 
+  macos:
+    name: macOS · Test + AOT example (Apple Silicon)
+    runs-on: macos-latest
+    # The Linux jobs run the suite under the JIT. Wallets ship on iOS, where
+    # Flutter release builds compile Dart ahead-of-time for arm64. This runs the
+    # suite on Apple Silicon and AOT-compiles and runs the example, so
+    # platform-specific behaviour (arm64, AOT, BigInt-heavy crypto) is exercised.
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - uses: dart-lang/setup-dart@65eb853c7ba17dde3be364c3d2858773e7144260 # v1.7.2
+        with:
+          sdk: stable
+      - run: dart pub get
+      - run: dart test
+      - name: AOT-compile and run the example
+        run: |
+          dart compile exe example/sdjwt_oid4vc_example.dart -o example_aot
+          ./example_aot
+
   pointycastle-floor:
     name: Compat · pointycastle 3.9.x (wallet pin)
     runs-on: ubuntu-latest
