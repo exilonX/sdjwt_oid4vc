@@ -197,9 +197,32 @@ class Oid4vciClient {
         servers is List && servers.isNotEmpty && servers.first is String
             ? _uri(servers.first as String)
             : issuerUri;
-    final asMeta =
-        await _getJson(_wellKnown(base, 'oauth-authorization-server'));
+    final asMeta = await _authorizationServerMetadata(base);
     return _requiredUri(asMeta, 'token_endpoint');
+  }
+
+  /// RFC 8414 metadata for the authorization server [as]. Tries the path-aware
+  /// location first; if that fails and [as] has a path, falls back to the host
+  /// root, where some deployments serve it (the EUDI issuer's `…/oidc` AS
+  /// does). The fallback is accepted only when its `issuer` is exactly [as]
+  /// (RFC 8414 §3.3), so another server's metadata is never picked up.
+  Future<Map<String, dynamic>> _authorizationServerMetadata(Uri as) async {
+    const document = 'oauth-authorization-server';
+    final pathAware = _wellKnown(as, document);
+    final hostRoot = as.replace(path: '/.well-known/$document');
+    if (pathAware == hostRoot) return _getJson(pathAware);
+
+    final resp = await _http.get(pathAware);
+    if (resp.ok) return resp.json();
+
+    final meta = await _getJson(hostRoot);
+    if (meta['issuer'] != as.toString()) {
+      throw CredentialError(
+        'Authorization server metadata at $hostRoot is for '
+        '${meta['issuer']}, not $as',
+      );
+    }
+    return meta;
   }
 
   Map<String, String> _extractVcts(Map<String, dynamic> issuerMeta) {

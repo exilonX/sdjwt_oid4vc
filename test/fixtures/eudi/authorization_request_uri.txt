@@ -1,0 +1,1 @@
+haip-vp://?client_id=x509_hash%3AIwslPFHbKBzkIyXhdqEkIao40jEDjzd_sDNUB-ZhTyE&request_uri=https%3A%2F%2Fverifier-backend.eudiw.dev%2Fwallet%2Frequest.jwt%2Fvd6ykKgf9W8A842qpS6d8_nxQa-rOCzF1n0_BS9zPqRpIBXkOJd12DFWWoDm07WK9zfey5asFF6ly2vsaEod_g&request_uri_method=get
