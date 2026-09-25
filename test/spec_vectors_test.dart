@@ -14,6 +14,14 @@ import 'support/fake_http.dart';
 ///    worked disclosure examples (§ "Disclosures for … Claims").
 ///  - Token Status List (draft-ietf-oauth-status-list), the "Test Vectors"
 ///    appendix (1-bit and 2-bit encoded lists).
+// The spec's `address` Disclosure, split only for line width. Kept out of the
+// record literal below because `dart format` 3.10 and 3.13 disagree on how to
+// indent adjacent strings there (CI formats with stable, devs may not).
+const _addressDisclosure =
+    'WyJBSngtMDk1VlBycFR0TjRRTU9xUk9BIiwgImFkZHJlc3MiLCB7InN0cmVldF9hZGRy'
+    'ZXNzIjogIjEyMyBNYWluIFN0IiwgImxvY2FsaXR5IjogIkFueXRvd24iLCAicmVnaW9u'
+    'IjogIkFueXN0YXRlIiwgImNvdW50cnkiOiAiVVMifV0';
+
 void main() {
   group('SD-JWT disclosure vectors (RFC 9901)', () {
     // Each row: the base64url Disclosure exactly as printed in the spec, the
@@ -42,10 +50,7 @@ void main() {
         digest: 'TGf4oLbgwd5JQaHyKVQZU9UdGE0w5rtDsrZzfUaomLo',
       ),
       (
-        disclosure:
-            'WyJBSngtMDk1VlBycFR0TjRRTU9xUk9BIiwgImFkZHJlc3MiLCB7InN0cmVldF9hZGRy'
-            'ZXNzIjogIjEyMyBNYWluIFN0IiwgImxvY2FsaXR5IjogIkFueXRvd24iLCAicmVnaW9u'
-            'IjogIkFueXN0YXRlIiwgImNvdW50cnkiOiAiVVMifV0',
+        disclosure: _addressDisclosure,
         salt: 'AJx-095VPrpTtN4QMOqROA',
         name: 'address',
         value: {
